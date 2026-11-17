@@ -52,15 +52,15 @@ class CollectionTransferTests(TestCase):
         m.CoverValuation.objects.create(cover=self.cover, amt="12.50", **self.stamp)
         postmaster = m.Postmaster.objects.create(name="A. Person", sort_name="Person, A.", **self.stamp)
         m.PostmasterTenure.objects.create(post_office=self.office, postmaster=postmaster, event="appointment", date_appointed="1850-01-01", date_appointed_granularity="DAY", **self.stamp)
-        self.pending = m.Contribution.objects.create(collection=self.collection, contributor=self.user, status="pending", submitted_data={
+        self.pending = m.Submission.objects.create(collection=self.collection, contributor=self.user, status="pending", submitted_data={
             "submission_kind": "cover", "parent_marking_id": self.marking.pk,
             "edit_cover_id": str(self.cover.pk), "color_id": self.color.pk,
             "reference_work_ids": [self.reference.pk],
             "cover_image_metas": [{"storage_filename": "pending.jpg"}],
         }, **self.stamp)
-        self.rejected = m.Contribution.objects.create(collection=self.collection, contributor=self.user, status="rejected", submitted_data={"town": "Honolulu"}, **self.stamp)
-        m.ContributionRecycleBin.objects.create(contribution=self.rejected, archived_by=self.user)
-        tx = m.SubmissionTransaction.objects.create(actor=self.user, contribution=self.pending, marking=self.marking, cover=self.cover, action="submit", after_payload=build_marking_snapshot(self.marking), extra_payload={"previous_storage_filename": "history.jpg"})
+        self.rejected = m.Submission.objects.create(collection=self.collection, contributor=self.user, status="rejected", submitted_data={"town": "Honolulu"}, **self.stamp)
+        m.SubmissionRecycleBin.objects.create(submission=self.rejected, archived_by=self.user)
+        tx = m.SubmissionTransaction.objects.create(actor=self.user, submission=self.pending, marking=self.marking, cover=self.cover, action="submit", after_payload=build_marking_snapshot(self.marking), extra_payload={"previous_storage_filename": "history.jpg"})
         m.MarkingVersion.objects.create(marking=self.marking, version_no=1, transaction=tx, created_by=self.user, snapshot=build_marking_snapshot(self.marking))
         m.CoverVersion.objects.create(cover=self.cover, version_no=1, transaction=tx, created_by=self.user, snapshot={"cover_id": self.cover.pk})
         m.MarkingRecycleBin.objects.create(marking=self.marking, removed_by=self.user, reason="Review later")
@@ -95,10 +95,10 @@ class CollectionTransferTests(TestCase):
         marking = m.Marking.all_objects.get(code="HI-M1")
         self.assertNotEqual(marking.pk, source_marking_id)
         cover = m.Cover.all_objects.get(code="HI-C1")
-        contribution = m.Contribution.objects.get(status="pending")
-        self.assertEqual(contribution.submitted_data["parent_marking_id"], marking.pk)
-        self.assertEqual(contribution.submitted_data["edit_cover_id"], str(cover.pk))
-        self.assertEqual(m.ContributionRecycleBin.objects.count(), 1)
+        submission = m.Submission.objects.get(status="pending")
+        self.assertEqual(submission.submitted_data["parent_marking_id"], marking.pk)
+        self.assertEqual(submission.submitted_data["edit_cover_id"], str(cover.pk))
+        self.assertEqual(m.SubmissionRecycleBin.objects.count(), 1)
         self.assertEqual(m.MarkingRecycleBin.objects.count(), 1)
         self.assertEqual(m.PostmasterTenure.objects.count(), 1)
         self.assertEqual(m.Image.objects.get(storage_filename="crop.jpg").cropped_from.storage_filename, "current.jpg")
@@ -150,7 +150,7 @@ class CollectionTransferTests(TestCase):
         self.assertTrue(m.Cover.all_objects.filter(pk=self.cover.pk).exists())
         self.assertEqual(list(m.CoverMarking.objects.values_list("marking_id", flat=True)), [external.pk])
         self.assertTrue(m.Collection.objects.filter(pk=self.collection.pk).exists())
-        self.assertEqual(m.Contribution.objects.count(), 0)
+        self.assertEqual(m.Submission.objects.count(), 0)
         self.assertTrue(self.source_media.joinpath("current.jpg").exists())
 
     def test_guard_refuses_stale_source_and_unrelated_report(self):
@@ -171,13 +171,13 @@ class CollectionTransferTests(TestCase):
     def test_multiple_uncoded_entries_and_pending_rows_remain_distinct(self):
         for _ in range(2):
             m.Marking.objects.create(post_office=self.office, type="TOWNMARK", is_manuscript=True, catalog_txt="Uncoded", inscription_txt="Honolulu", **self.stamp)
-            m.Contribution.objects.create(collection=self.collection, contributor=self.user, submitted_data={"town": "Honolulu"}, **self.stamp)
+            m.Submission.objects.create(collection=self.collection, contributor=self.user, submitted_data={"town": "Honolulu"}, **self.stamp)
         self.backup()
         self.clear_source()
         self.restore()
         self.restore()
         self.assertEqual(m.Marking.all_objects.filter(code__isnull=True).count(), 2)
-        self.assertEqual(m.Contribution.objects.count(), 4)
+        self.assertEqual(m.Submission.objects.count(), 4)
 
     def test_archived_history_keeps_deleted_reference_identity(self):
         m.MarkingVersion.objects.filter(marking=self.marking).update(snapshot={"color_id": 2147483647})
@@ -258,7 +258,7 @@ class CollectionTransferTests(TestCase):
             call_command("drop_ascc_state", region_code=self.region.code, bundle=str(self.bundle), verification_report=str(report), stdout=StringIO())
             call_command("restore_collection", str(self.bundle), stdout=StringIO())
             call_command("verify_collection", str(self.bundle), stdout=StringIO())
-        self.assertEqual(m.Contribution.objects.count(), 2)
+        self.assertEqual(m.Submission.objects.count(), 2)
         self.assertEqual(m.Marking.all_objects.get().code, "HI-M1")
 
     def test_bundle_cannot_bind_user_by_destination_integer_id(self):
@@ -266,7 +266,7 @@ class CollectionTransferTests(TestCase):
         records_path = self.bundle / "records.json"
         manifest_path = self.bundle / "manifest.json"
         records = json.loads(records_path.read_text())
-        key = f"common.contribution:{self.pending.pk}"
+        key = f"common.submission:{self.pending.pk}"
         records[key]["fields"]["contributor"] = self.user.pk
         manifest = json.loads(manifest_path.read_text())
         manifest["records_sha256"] = digest(records)
@@ -316,11 +316,11 @@ class CollectionTransferTests(TestCase):
         self.assertEqual(m.Marking.all_objects.count(), 2)
         self.assertEqual(m.Region.objects.count(), 3)
 
-    def test_other_collection_contribution_blocks_state_removal(self):
+    def test_other_collection_submission_blocks_state_removal(self):
         external = self.external_marking()
         region = external.post_office.post_office_regions.get().region
         other = m.Collection.objects.create(name="California", region=region, **self.stamp)
-        m.Contribution.objects.create(collection=other, contributor=self.user, marking=self.marking, status="approved", **self.stamp)
+        m.Submission.objects.create(collection=other, contributor=self.user, marking=self.marking, status="approved", **self.stamp)
         with self.assertRaisesMessage(CommandError, "Another Collection"):
             call_command("drop_ascc_state", region_code=self.region.code, stdout=StringIO())
         self.assertTrue(m.Marking.all_objects.filter(pk=self.marking.pk).exists())
@@ -338,7 +338,7 @@ class CollectionTransferTests(TestCase):
         self.verify()
         self.assertEqual(m.Cover.all_objects.count(), 2)
         self.assertEqual(
-            m.Contribution.objects.get(status="pending").submitted_data["coverId"],
+            m.Submission.objects.get(status="pending").submitted_data["coverId"],
             m.Cover.all_objects.get(code="HI-C2").pk,
         )
 

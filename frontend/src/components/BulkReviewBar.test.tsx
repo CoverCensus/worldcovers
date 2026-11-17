@@ -6,18 +6,18 @@ import userEvent from "@testing-library/user-event";
 
 import { BulkReviewBar, CONFIRM_THRESHOLD } from "./BulkReviewBar";
 import {
-  bulkReviewContributions,
-  listContributionIds,
-} from "@/services/contributions";
+  bulkReviewSubmissions,
+  listSubmissionIds,
+} from "@/services/submissions";
 
-jest.mock("@/services/contributions", () => ({
+jest.mock("@/services/submissions", () => ({
   __esModule: true,
-  bulkReviewContributions: jest.fn(),
-  listContributionIds: jest.fn(),
+  bulkReviewSubmissions: jest.fn(),
+  listSubmissionIds: jest.fn(),
 }));
 
-const mockBulk = bulkReviewContributions as jest.Mock;
-const mockIds = listContributionIds as jest.Mock;
+const mockBulk = bulkReviewSubmissions as jest.Mock;
+const mockIds = listSubmissionIds as jest.Mock;
 
 // Issue #101. The two behaviours here that are easy to regress into something
 // that looks fine and is wrong:

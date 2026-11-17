@@ -24,6 +24,14 @@ def run_command(cmd: list[str], cwd: Path) -> None:
 
 def run_import_args(args) -> list[str]:
     import_args = []
+    if args.actor is not None:
+        import_args.extend(["--actor", str(args.actor)])
+    if args.refresh_pending:
+        import_args.append("--refresh-pending")
+    if args.review_report:
+        import_args.extend(["--review-report", args.review_report])
+    if args.direct:
+        import_args.append("--direct")
     if args.only:
         import_args.extend(["--only", args.only])
     if args.allow_missing:

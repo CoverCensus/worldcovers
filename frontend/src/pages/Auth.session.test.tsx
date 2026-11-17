@@ -19,9 +19,9 @@ it("leaves the signup page when Django finds an existing session without local s
   render(<MemoryRouter initialEntries={[{ pathname: "/auth", state: { from: "/contribute" } }]}>
     <Routes>
       <Route path="/auth" element={<Auth />} />
-      <Route path="/contribute" element={<p>Contribution form</p>} />
+      <Route path="/contribute" element={<p>Submission form</p>} />
     </Routes>
   </MemoryRouter>);
-  expect(await screen.findByText("Contribution form")).toBeTruthy();
+  expect(await screen.findByText("Submission form")).toBeTruthy();
   expect(screen.queryByRole("button", { name: "Create account" })).toBeNull();
 });

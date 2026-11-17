@@ -48,7 +48,7 @@ export function getSearchParam(
 
 /**
  * Submission source for the editor queue (issue #136). Mirrors the backend's
- * ContributionListFilter.source choices; the union is what keeps a hand-edited
+ * SubmissionListFilter.source choices; the union is what keeps a hand-edited
  * `?e_source=` out of a request the API would reject.
  *
  * "all" is the default. It used to be "vphc" -- issue #101's guard, from when
@@ -119,7 +119,7 @@ export function serializeSort(entries: SortEntry[]): string {
 /**
  * Sort field -> the API's public `?ordering=` key. The wire spelling is not
  * always the display one: the serializer emits `created_at`, not `submitted`.
- * See ContributionViewSet.ordering_aliases, which is the other half of this.
+ * See SubmissionViewSet.ordering_aliases, which is the other half of this.
  */
 const EDITOR_ORDERING_KEY: Record<DashboardSortField, string> = {
   status: "status",
@@ -241,7 +241,7 @@ export function buildDashboardParams(state: DashboardParams): URLSearchParams {
 /**
  * Last dashboard view the user was looking at, in sessionStorage.
  *
- * Screens an editor reaches from the dashboard (contribution detail, record
+ * Screens an editor reaches from the dashboard (submission detail, record
  * detail, the edit forms) are several navigations deep and cannot thread the
  * dashboard's query string through location state reliably -- it is lost on
  * reload and on any redirect. Reading it back from here means every "back to

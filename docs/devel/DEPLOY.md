@@ -9,10 +9,9 @@ for creating that host profile; it is not a generic Linux provisioning script.
 
 Source of truth:
 
-- `.github/workflows/verify.yml`: shared frontend and backend checks
-- `.github/workflows/pr-checks.yml`: verification on pull requests
-- `.github/workflows/build-and-deploy.yml`: staging deploy to `woco.dev`
-- `.github/workflows/deploy-prod.yml`: production deploy to `hellowoco.app`
+- [Deploy Flow](#deploy-flow) below: the manual steps for `woco.dev` and
+  `hellowoco.app` (GitHub Actions deploys were retired on 2026-10-30)
+- [BUILD.md](BUILD.md#verification): the checks that must pass before a deploy
 - `deploy/provision.sh`: one-time Ubuntu 24.04 root host build (see below)
 - `deploy/deploy.sh`: unprivileged app build and migration steps
 - `deploy/worldcovers.service`: gunicorn systemd service definition
@@ -25,7 +24,7 @@ not yet aligned. Status recorded on 2026-09-13:
 
 | Environment | Current evidence | Planned change |
 |---|---|---|
-| CI | Staging deploys and PRs targeting `staging` use `mariadb:12.3`. Production deploys and other PRs use `mariadb:10.11`. | Update production verification with its server upgrade. |
+| Former CI (historical) | Staging deploys and PRs targeting `staging` used `mariadb:12.3`. Production deploys and other PRs used `mariadb:10.11`. PR #227 removed these workflows. | Checks now run manually; see [verification](BUILD.md#verification). |
 | Local workspace | MariaDB 12.2.2 was observed locally; setup does not enforce a release series. | No local upgrade has been made as part of this work. |
 | Staging, `woco.dev` | Migration from MySQL to MariaDB LTS completed successfully, confirmed by the operator. The migration procedure targeted 12.3. | Align provisioning with the selected LTS series. |
 | Production, `hellowoco.app` | MariaDB was reported; prior deployment records give 10.11.14. | A separate upgrade is planned. Completion is not confirmed. |
@@ -89,7 +88,7 @@ Use the production hostname in that command when provisioning production.
 ## Hosts
 
 Both hosts keep the repo at `/srv/woco`, owned by `wocod:wocod`.
-GitHub Actions deploys over SSH as `wocod`; it never SSHes as `root`.
+Deploys run over SSH as `wocod`; nothing deploys as `root`.
 
 ```text
 staging:
@@ -119,19 +118,67 @@ Expected host layout:
   backups/
 ```
 
-## GitHub Actions Deploy Flow
+## Serving A Second Hostname
 
-Pull requests and both deployment branches call `verify.yml`. Its frontend
-job runs the fingerprint scan, dependency audit, lint, type checks, tests,
-and build. Its backend job runs the tools pytest suite, Django system checks,
-and the `common` test suite. The shared workflow accepts a `mariadb-version`
-input, which defaults to `10.11` for production. Staging passes `12.3`; PRs
-targeting `staging` use the same version. See
-[BUILD.md](BUILD.md#verification) for local commands.
+`DJANGO_APP_EXTRA_HOSTNAMES` (comma-separated, empty by default) lets one host
+answer on more names than `DJANGO_APP_HOSTNAME`, with the same site behind
+each (Trello T105: americanpostmarkcatalog.org next to hellowoco.app). Each
+extra name goes into `ALLOWED_HOSTS` (with its `www.` form),
+`CSRF_TRUSTED_ORIGINS` and `CORS_ALLOWED_ORIGINS` (bare name, https). Entries
+must be plain hostnames: `*`, a leading dot, a scheme or a port refuses to
+start. Emails, sign-up links, the from-address and the site role stay on
+`DJANGO_APP_HOSTNAME`. Sessions are per name: signing in on one name does not
+sign you in on the other. Django's HSTS header (`includeSubDomains`,
+`preload`) then covers the new domain too: every future subdomain of it must
+serve HTTPS. Do not submit it to the browser preload list.
 
-Both deploy jobs require verification to pass before they connect to the
-host. Pushes to `staging` deploy to `woco.dev`; pushes to `main` deploy to
-`hellowoco.app`. Both workflows also support manual dispatch.
+Order, as `root` on the host:
+
+1. Add `DJANGO_APP_EXTRA_HOSTNAMES=americanpostmarkcatalog.org` to
+   `/srv/woco/backend/.env`, then `systemctl restart worldcovers`.
+2. Add `americanpostmarkcatalog.org www.americanpostmarkcatalog.org` to every
+   `server_name` line of the live nginx site, then `nginx -t` and
+   `systemctl reload nginx`.
+3. Point DNS for both names at this host, DNS only (not proxied), same A and
+   AAAA as the primary, and delete the temporary Cloudflare redirect rules
+   for them.
+4. Run `certbot certificates` and note the existing certificate's name and
+   domains (2026-10-30: hellowoco.app, www.hellowoco.app). Re-issue it with
+   those domains plus the two new ones:
+
+```sh
+certbot --nginx --cert-name hellowoco.app -d hellowoco.app -d www.hellowoco.app \
+  -d americanpostmarkcatalog.org -d www.americanpostmarkcatalog.org
+```
+
+HTTPS on the new name fails between steps 3 and 4, so run them together at a
+quiet hour. Check from outside: `curl -sI https://americanpostmarkcatalog.org/`
+answers 200 with no redirect, and hellowoco.app still answers 200.
+
+Undo: empty the variable and restart, then point the new name somewhere else
+in DNS (back to the Cloudflare redirect rules, proxied), or it answers 400.
+nginx and the certificate can keep the extra names.
+
+## Deploy Flow
+
+Deploys are manual since 2026-10-30. After a maintainer account was used to
+force-push malicious commits (workspace issue #228), GitHub Actions was
+disabled for the repository and the workflow files were removed, so nothing
+builds or deploys on a merge. A maintainer runs the steps below by hand after
+the PR has merged. Re-enabling automatic deploys is a deliberate decision,
+not a settings toggle: it needs new workflow files, new deploy keys, and a
+required-status-check rule on `main` and `staging`.
+
+Before deploying, run the verification checks locally on the exact commit
+that merged: the fingerprint scan, dependency audits, lint, type checks,
+tests, and build for the frontend; the tools pytest suite, Django system
+checks, and the `common` test suite for the backend. Use MariaDB `12.3` when
+checking a `staging` deploy and `10.11` for production. See
+[BUILD.md](BUILD.md#verification) for the commands. Deploy only if every
+check passes.
+
+Merges to `staging` are deployed to `woco.dev`; merges to `main` are deployed
+to `hellowoco.app`. Run one deployment at a time.
 
 Staging deploy over SSH as `wocod`:
 
@@ -157,13 +204,11 @@ cd /srv/woco && ./deploy/deploy.sh
 sudo -n /bin/systemctl start worldcovers
 ```
 
-Production deploy fails before stopping the service if the checked-in unit file
-differs from the installed unit. A root operator must review and apply that
-change manually.
-
-Both workflows install an EXIT trap before stopping the app. If a later
-deploy step fails, the trap attempts to start the service again. It does not
-roll back code or database migrations.
+Run the commands in order and stop at the first failure. If the production
+unit files differ, leave the service running while a root operator reviews
+the difference. If a step fails after the service stops, the operator must
+resolve the failure, start the service, and check `systemctl is-active
+worldcovers`. Recovery of code or database migrations is manual.
 
 ## What deploy/deploy.sh Does
 
@@ -279,16 +324,12 @@ Install only `worldcovers-actions-staging.pub` for
 `wocod@woco.dev`. Install only `worldcovers-actions-prod.pub` for
 `wocod@hellowoco.app`.
 
-Update GitHub Actions secrets:
-
-```text
-STAGING_DEPLOY_SSH_KEY = private key from worldcovers-actions-staging
-PROD_DEPLOY_SSH_KEY = private key from worldcovers-actions-prod
-```
-
-After both new deploys succeed, delete the old shared `DEPLOY_SSH_KEY` secret
-and remove its public key from all server `authorized_keys` files, including
-root on staging if it was added there.
+These key pairs are only needed if automatic deploys are restored; while
+deploys are manual, each maintainer uses their own SSH key as `wocod`. If
+Actions is restored, store the private keys as repository secrets
+(`STAGING_DEPLOY_SSH_KEY`, `PROD_DEPLOY_SSH_KEY`) and, after both new deploys
+succeed, remove every older automation public key from all server
+`authorized_keys` files, including root on staging if one was added there.
 
 ## SSH Policy
 

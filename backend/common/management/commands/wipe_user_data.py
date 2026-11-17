@@ -1,5 +1,5 @@
 """
-Wipe user-generated submission data (contributions, drafts, version history,
+Wipe user-generated submission data (submissions, drafts, version history,
 and recycle bins), leaving the 14 ASCC catalog tables, all auth Users, and the
 editor curation config (Collections + assignments) untouched.
 
@@ -10,7 +10,7 @@ Intended workflow -- run this FIRST, then refresh the catalog:
 
 After both steps the system holds only freshly imported catalog entries, your
 existing user accounts, and the editor assignments that route future
-contributions. The importer's own --truncate handles the 14 catalog tables;
+submissions. The importer's own --truncate handles the 14 catalog tables;
 this command only clears the non-catalog submission rows that would otherwise
 dangle once the catalog is re-imported.
 
@@ -20,7 +20,7 @@ What is WIPED (6 tables, all rows):
     CoverVersions            cover snapshot history
     marking_recycle_bin      soft-deleted markings
     cover_recycle_bin        soft-deleted covers
-    Contributions            pending / draft / approved submissions
+    Submissions            pending / draft / approved submissions
 
 What is PRESERVED:
     * the 14 ASCC catalog tables (handled by import_ascc_bundle --truncate)
@@ -41,7 +41,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import connection, transaction
 
 from common.models import (
-    Contribution,
+    Submission,
     CoverRecycleBin,
     CoverVersion,
     MarkingRecycleBin,
@@ -62,13 +62,13 @@ WIPE_ORDER = (
     CoverVersion,
     MarkingRecycleBin,
     CoverRecycleBin,
-    Contribution,
+    Submission,
 )
 
 
 class Command(BaseCommand):
     help = (
-        "Delete user-generated submission data (contributions, drafts, "
+        "Delete user-generated submission data (submissions, drafts, "
         "versions, recycle bins). Leaves the 14 catalog tables, auth Users, "
         "and editor Collection assignments untouched. Run "
         "before import_ascc_bundle --truncate for a fresh, catalog-only system."
@@ -98,7 +98,7 @@ class Command(BaseCommand):
             self.stdout.write(self.style.NOTICE("DRY RUN: no rows will be committed."))
         elif not no_input:
             self.stdout.write(self.style.WARNING(
-                "This will permanently delete ALL contributions, drafts, version "
+                "This will permanently delete ALL submissions, drafts, version "
                 "history, and recycle bins. Catalog tables, user accounts, and "
                 "editor Collection assignments are NOT touched."
             ))

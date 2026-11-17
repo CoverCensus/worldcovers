@@ -1,5 +1,5 @@
 interface CoverReviewBannerProps {
-  /** Review status of the cover or contribution being edited, lower-cased. */
+  /** Review status of the cover or submission being edited, lower-cased. */
   status: string | null | undefined;
   /** The editor's comment, when there is one. */
   notes: string | null | undefined;
@@ -9,7 +9,7 @@ interface CoverReviewBannerProps {
  * Tells a contributor where their submission stands while they are editing it.
  *
  * This exists as its own component because the two routes into the cover editor
- * (`/cover/:coverId/edit` and `/cover/new?edit=<contributionId>`) load their review
+ * (`/cover/:coverId/edit` and `/cover/new?edit=<submissionId>`) load their review
  * state from different objects. Gating the banner on the editor route alone meant a
  * returned submission reached its contributor with no explanation of what to change.
  */

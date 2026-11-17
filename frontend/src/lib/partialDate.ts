@@ -1,4 +1,4 @@
-import type { Submission } from "@/lib/submission";
+import type { SubmittedData } from "@/lib/submission";
 export type DateSeenGranularity =
   | "YEAR"
   | "MONTH"
@@ -161,7 +161,7 @@ export function validatePartialDate(input: PartialDateInput): PartialDateValidat
   };
 }
 
-export function partialDateInputFromSubmittedData(sd: Submission): PartialDateInput {
+export function partialDateInputFromSubmittedData(sd: SubmittedData): PartialDateInput {
   return partialDateInputFromPayload(sd, {
     unknown: "cover_date_unknown",
     year: "cover_date_year",
@@ -173,7 +173,7 @@ export function partialDateInputFromSubmittedData(sd: Submission): PartialDateIn
 }
 
 export function markingBoundaryDateInputFromSubmission(
-  sd: Submission,
+  sd: SubmittedData,
   prefix: "marking_erd" | "marking_lrd",
 ): PartialDateInput {
   return partialDateInputFromPayload(sd, {

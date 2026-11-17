@@ -1,6 +1,6 @@
-import type { Submission } from "@/lib/submission";
+import type { SubmittedData } from "@/lib/submission";
 /**
- * Physical size in millimetres for catalog contributions.
+ * Physical size in millimetres for catalog submissions.
  */
 
 const MM_PAIR_RE = /^\d{1,6}(\.\d{1,2})?$/;
@@ -81,7 +81,7 @@ export function validateMmPair(width: string, height: string): { width?: string;
 }
 
 /** Read width/height from submitted_data / API (snake_case or camelCase). */
-export function submittedDataToWidthHeightStrings(sd: Submission | undefined | null): {
+export function submittedDataToWidthHeightStrings(sd: SubmittedData | undefined | null): {
   width: string;
   height: string;
 } {
@@ -96,7 +96,7 @@ export function submittedDataToWidthHeightStrings(sd: Submission | undefined | n
 }
 
 /** Dashboard / list: human-readable size from submission JSON. */
-export function formatSizeFromSubmittedData(sd: Submission | undefined | null): string {
+export function formatSizeFromSubmittedData(sd: SubmittedData | undefined | null): string {
   if (!sd || typeof sd !== "object") return "";
   const w = String(sd.width_mm ?? "").trim();
   const h = String(sd.height_mm ?? "").trim();

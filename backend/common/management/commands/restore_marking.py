@@ -18,7 +18,7 @@ from common.marking_resources import (
 )
 from common.models import (
     Collection,
-    Contribution,
+    Submission,
     Cover,
     CoverRecycleBin,
     CoverVersion,
@@ -174,23 +174,23 @@ class Command(BaseCommand):
         return root_code, datasets
 
     def _validate_required_users(self, datasets):
-        contribution_dataset = datasets.get("contributions")
-        if contribution_dataset is None:
+        submission_dataset = datasets.get("submissions")
+        if submission_dataset is None:
             return
 
         usernames = {
             (row.get("contributor") or "").strip()
-            for row in contribution_dataset.dict
+            for row in submission_dataset.dict
         }
         usernames.discard("")
         blank_count = sum(
             1
-            for row in contribution_dataset.dict
+            for row in submission_dataset.dict
             if not (row.get("contributor") or "").strip()
         )
         if blank_count:
             raise CommandError(
-                "Contribution restore requires every row to include a contributor."
+                "Submission restore requires every row to include a contributor."
             )
 
         existing = set(
@@ -214,8 +214,8 @@ class Command(BaseCommand):
                 self.stdout.write(f"{spec.label} import skipped.")
                 continue
 
-            if spec.name == "contributions":
-                dataset = self._normalize_contribution_collections(dataset, datasets)
+            if spec.name == "submissions":
+                dataset = self._normalize_submission_collections(dataset, datasets)
                 datasets[spec.name] = dataset
 
             resource_kwargs = {}
@@ -229,7 +229,7 @@ class Command(BaseCommand):
                 )
             )
 
-    def _normalize_contribution_collections(self, dataset, datasets):
+    def _normalize_submission_collections(self, dataset, datasets):
         collection_dataset = datasets.get("collections")
         if collection_dataset is None:
             return dataset
@@ -268,14 +268,14 @@ class Command(BaseCommand):
         return _replace_dataset_rows(dataset, rows)
 
     def _restore_saved_timestamps(self, datasets):
-        self._restore_contribution_timestamps(datasets.get("contributions"))
+        self._restore_submission_timestamps(datasets.get("submissions"))
         self._restore_transaction_timestamps(datasets.get("submission_transactions"))
         self._restore_marking_version_timestamps(datasets.get("marking_versions"))
         self._restore_cover_version_timestamps(datasets.get("cover_versions"))
         self._restore_marking_recycle_timestamps(datasets.get("marking_recycle_bin"))
         self._restore_cover_recycle_timestamps(datasets.get("cover_recycle_bin"))
 
-    def _restore_contribution_timestamps(self, dataset):
+    def _restore_submission_timestamps(self, dataset):
         if dataset is None:
             return
         for row in dataset.dict:
@@ -290,7 +290,7 @@ class Command(BaseCommand):
             if modified is not None:
                 updates["modified_date"] = modified
             if updates:
-                Contribution.objects.filter(marking__code=code).update(**updates)
+                Submission.objects.filter(marking__code=code).update(**updates)
 
     def _restore_transaction_timestamps(self, dataset):
         if dataset is None:
@@ -372,17 +372,17 @@ class Command(BaseCommand):
                 f"Restore did not create or update root marking: {root_code}"
             )
 
-        contribution_dataset = datasets.get("contributions")
-        if contribution_dataset is None:
+        submission_dataset = datasets.get("submissions")
+        if submission_dataset is None:
             return
 
         missing_links = []
-        for row in contribution_dataset.dict:
+        for row in submission_dataset.dict:
             code = (row.get("marking_code") or "").strip()
             username = (row.get("contributor") or "").strip()
             if not code or not username:
                 continue
-            exists = Contribution.objects.filter(
+            exists = Submission.objects.filter(
                 marking__code=code,
                 contributor__username=username,
             ).exists()
@@ -391,7 +391,7 @@ class Command(BaseCommand):
 
         if missing_links:
             raise CommandError(
-                "Restore did not create expected contribution link(s): "
+                "Restore did not create expected submission link(s): "
                 + ", ".join(missing_links)
             )
 

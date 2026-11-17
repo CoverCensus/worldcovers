@@ -14,7 +14,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 
 from common.catalog_codes import _next_serial
-from common.models import Collection, Contribution, Marking, PostOffice, Region
+from common.models import Collection, Submission, Marking, PostOffice, Region
 
 PREFIX = "ASCC6-VA-M"
 
@@ -43,8 +43,8 @@ class NextSerialTests(TestCase):
             post_office=self.post_office,
             created_by=self.user, modified_by=self.user)
 
-    def contribution(self, payload, status=Contribution.STATUS_PENDING):
-        return Contribution.objects.create(
+    def submission(self, payload, status=Submission.STATUS_PENDING):
+        return Submission.objects.create(
             contributor=self.user, status=status, submitted_data=payload,
             collection=self.collection, created_by=self.user, modified_by=self.user)
 
@@ -56,14 +56,14 @@ class NextSerialTests(TestCase):
         self.marking(f"{PREFIX}0003")
         self.assertEqual(_serial(), 8)
 
-    def test_reads_pending_contributions(self):
+    def test_reads_pending_submissions(self):
         """A queued code is reserved even though no Marking row exists yet."""
-        self.contribution({"catalog_code": f"{PREFIX}0042"})
+        self.submission({"catalog_code": f"{PREFIX}0042"})
         self.assertEqual(_serial(), 43)
 
     def test_takes_the_max_across_both_sources(self):
         self.marking(f"{PREFIX}0100")
-        self.contribution({"catalog_code": f"{PREFIX}0250"})
+        self.submission({"catalog_code": f"{PREFIX}0250"})
         self.assertEqual(_serial(), 251)
 
     def test_serial_above_padding_width(self):
@@ -89,31 +89,31 @@ class NextSerialTests(TestCase):
         code_value_from_payload reads catalog_code, catalogCode, then code, and
         treats whitespace as blank. The SQL has to agree on both counts.
         """
-        self.contribution({"catalog_code": f"{PREFIX}0050", "code": f"{PREFIX}0900"})
+        self.submission({"catalog_code": f"{PREFIX}0050", "code": f"{PREFIX}0900"})
         self.assertEqual(_serial(), 51)
 
-        self.contribution({"catalog_code": "   ", "code": f"{PREFIX}0060"})
+        self.submission({"catalog_code": "   ", "code": f"{PREFIX}0060"})
         self.assertEqual(_serial(), 61)
 
-    def test_ignores_approved_and_rejected_contributions(self):
+    def test_ignores_approved_and_rejected_submissions(self):
         """Only DRAFT / PENDING / NEEDS_REVISION reserve a code.
 
-        An approved contribution already has its Marking row, which the first
+        An approved submission already has its Marking row, which the first
         half counts; counting it twice would be harmless, but a rejected one
         must release its serial.
         """
-        self.contribution({"catalog_code": f"{PREFIX}0500"},
-                          status=Contribution.STATUS_REJECTED)
+        self.submission({"catalog_code": f"{PREFIX}0500"},
+                          status=Submission.STATUS_REJECTED)
         self.assertEqual(_serial(), 1)
 
     def test_exclusions_release_a_serial(self):
         """Re-suggesting for a row must not collide with that row's own code."""
         marking = self.marking(f"{PREFIX}0080")
-        contrib = self.contribution({"catalog_code": f"{PREFIX}0090"})
+        contrib = self.submission({"catalog_code": f"{PREFIX}0090"})
 
         self.assertEqual(_serial(), 91)
         self.assertEqual(
             _next_serial(subject_type="MARKING", prefix=PREFIX,
-                         exclude_id=marking.pk, exclude_contribution_id=contrib.pk),
+                         exclude_id=marking.pk, exclude_submission_id=contrib.pk),
             1,
         )

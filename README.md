@@ -19,11 +19,12 @@ Editors review them for their assigned Collections. Offline tools prepare
 catalog data for import. Available data and review progress vary by state
 and site.
 
-Start with the [vision](./docs/vision.md) for scope, the
-[model](./docs/devel/model.md) for domain records, and the
-[ASCC pipeline](./docs/devel/PIPELINE.md) or
-[VPHC commands](./docs/devel/TOOLS.md#vphc-commands) for data preparation.
-The [verification guide](./docs/devel/BUILD.md#verification) covers tests.
+New developers: run the [Quickstart](#quickstart) below, then read
+[New Developer Orientation](./docs/devel/README.md#new-developer-orientation).
+It has the system sketch, directory map, identifier legend, and reading
+order. Open work is in [ISSUE.md](./ISSUE.md). Rules for code changes are
+in [DECISIONS.md](./DECISIONS.md).
+
 New state Editors should read [Getting Started](./docs/getting-started.md).
 
 WorldCovers has three main code areas:
@@ -43,14 +44,21 @@ For design and scope details, see [docs/devel/design.md](./docs/devel/design.md)
 
 ## Quickstart
 
+Bodger is optional. It is the catalog extraction toolset, kept in a
+separate repository that is private to the CoverCensus GitHub organization.
+The setup below installs WorldCovers without it. To request access, open
+a GitHub issue on this repository; see
+[Getting Bodger Access](./docs/devel/TOOLS.md#getting-bodger-access). Base catalog work, Entry submission and review,
+and imports of prepared bundles do not require the extraction tools.
+
 Prerequisites:
 
 - Local development has been tested on macOS & Ubuntu Linux via WSL2. Native Windows should work the same if the dependencies are properly installed.
 - Python 3.13, pinned by [.python-version](./.python-version)
 - `uv`, installed with `curl -LsSf https://astral.sh/uv/install.sh | sh`
 - Node.js and npm for the frontend build
-- MariaDB, running locally. CI tests MariaDB 12.3 LTS for staging and 10.11
-  for production.
+- MariaDB, running locally. Manual verification uses MariaDB 12.3 LTS for
+  staging and 10.11 for production.
   `./woco setup dev` needs either `sudo mariadb`
   access or the MariaDB root password to create the local database and app user.
 
@@ -66,101 +74,32 @@ and app user, writes `mysql.cnf`, builds the frontend, runs migrations, and
 collects static files. Press Enter at the app-password prompt to generate a
 random password. The command is idempotent -- safe to re-run any time.
 
-For unattended setup, pass the values as environment variables:
-
-```sh
-WOCO_DB_PASSWORD=<app-db-password> \
-WOCO_MYSQL_ROOT_PASSWORD=<mariadb-root-password> \
-./woco setup dev
-```
-
-`WOCO_DB_NAME` and `WOCO_DB_USER` are optional. The database name falls back
-to `DB_NAME` from the environment or `.env`, then `worldcovers`; the default
-user is `wocod`. Omit `WOCO_MYSQL_ROOT_PASSWORD` when `sudo mariadb` works locally.
-
-For a custom database, first set `DB_NAME=worldcovers_local` in `.env`
-(copy `.env.example` if `.env` does not exist). Then run:
-
-```sh
-WOCO_DB_NAME=worldcovers_local ./woco setup dev
-```
-
-Keep the two names equal: `WOCO_DB_NAME` selects the database to create,
-while Django uses `DB_NAME` for migrations and normal use. Setup does not
-copy the selected name into `.env`. If `mysql.cnf` already exists, also set
-`WOCO_SETUP_DB=1` to create the custom database and grant access. This creates
-the database; it does not move data from the old one.
-
 Then start the dev server:
 
 ```sh
 ./woco dev
 ```
 
-The equivalent manual steps, if you prefer to run them yourself:
+Open `http://localhost:8080`. Expected: the SPA loads with an empty
+catalog. To load catalog data and create a login, see
+[Getting Catalog Data Locally](./docs/devel/README.md#getting-catalog-data-locally).
 
-```sh
-uv sync
-# Edit the password in tools/setup_worldcovers_db.sql first, then:
-sudo mariadb < tools/setup_worldcovers_db.sql
-cp mysql.cnf.example mysql.cnf   # then fill in the same user and password
-cp .env.example .env             # then set DJANGO_SECRET_KEY (see below)
-./woco secretkey                 # prints a fresh secret key
-cd frontend && npm ci && npm run build && cd ..
-./woco migrate
-./woco createcachetable
-./woco collectstatic --noinput
-./woco dev
-```
+`./woco` is the repo-local command for everything: setup, the dev server,
+and Django management commands. On Windows cmd.exe and PowerShell, use
+`.\woco.bat` in its place.
 
-Paste the generated secret key into the `DJANGO_SECRET_KEY=` line of `.env`
-before running `./woco migrate` -- Django refuses to start without it.
+[docs/devel/BUILD.md](./docs/devel/BUILD.md) is the one home for setup
+detail. It covers:
 
-`./woco` is the repo-local CLI shim for Django management commands on macOS
-and Linux. It runs `woco_cli.py` with `.venv/bin/python`, then calls
-Django's `execute_from_command_line`. Normal commands do not sync or rebuild
-the environment. Run `uv sync` explicitly after dependency changes in
-development; server deployment uses `uv sync --no-dev --frozen`.
-`./woco setup` can build the environment before Python is installed in it.
-`woco.bat` still uses `uv run` and is included as a convenience
-wrapper for Windows cmd.exe and PowerShell; use `.\woco.bat` in place of
-`./woco` on Windows systems.
+- [unattended setup and custom database names](./docs/devel/BUILD.md#one-command-setup)
+- [the same setup done by hand, step by step](./docs/devel/BUILD.md#steps)
+- [how `./woco` works](./docs/devel/BUILD.md#launcher)
+- [the tests and checks](./docs/devel/BUILD.md#verification)
 
-For full setup details and troubleshooting, see
-[docs/devel/BUILD.md](./docs/devel/BUILD.md). For a task-oriented index of
-all developer and operator docs, see
+For a task-oriented index of all developer and operator docs, see
 [docs/devel/README.md](./docs/devel/README.md).
 
 ## Development
-
-### Shared Agent Skills
-
-The repo keeps its shared sync skills in `.agents/skills`:
-
-- [worldcovers-sync-plan](.agents/skills/worldcovers-sync-plan/SKILL.md)
-  compares repo evidence, README.md, ISSUE.md, and live Trello.
-- [worldcovers-code-doc-sync](.agents/skills/worldcovers-code-doc-sync/SKILL.md)
-  checks code and tests against design, ISSUE.md, and DECISIONS.md.
-
-In your harness, invoke `$worldcovers-sync-plan` or `$worldcovers-code-doc-sync`.
-Other agents can read the linked SKILL.md files and follow their instructions.
-Maintain these repo copies as the source of truth for shared use.
-
-For a full sync, review Trello first, review code and docs next, apply approved
-local corrections, then check Trello against those changes. Keep each review
-limited to the affected work. Invoking a skill produces a plan; file and board
-updates need approval for that plan in the current task. Reuse approval already
-given for the same plan.
-
-For each commit, assign the relevant Trello cards and move only its work to
-Doing. Run a focused sync-plan review, develop and test, then move those cards
-to Testing. Run code-doc-sync for affected rules and a focused Trello sync
-check before pushing and deploying. Moving cards from Testing to Done is a
-separate acceptance step. See the [commit workflow decision](DECISIONS.md#keep-commit-work-in-sync-with-trello).
-
-The Trello review needs authenticated access to the WorldCovers board. Without
-it, continue the local review and report the board check as pending. Private
-workspace notes and archives are optional and are not part of these skills.
 
 ### Local Development
 
@@ -189,8 +128,29 @@ admin, media, and static requests are proxied to Django.
 With `DEBUG=False`, `./woco dev` builds `frontend/dist/` and serves the built
 SPA through Django at `http://127.0.0.1:8000`.
 
-For local test commands and the checks required by GitHub Actions, see
-[BUILD.md](./docs/devel/BUILD.md#verification).
+For local test commands and the verification checks that must pass before a
+deploy, see [BUILD.md](./docs/devel/BUILD.md#verification).
+
+### Shared Agent Skill
+
+Optional. Skip this section if you do not use an AI coding agent.
+
+The repo maintains one shared reconciliation skill:
+[worldcovers-sync-plan](.agents/skills/worldcovers-sync-plan/SKILL.md).
+It checks code and tests against design, README.md, ISSUE.md, and DECISIONS.md,
+then compares the evidence with live Trello and produces one correction plan.
+
+Invoke `$worldcovers-sync-plan`, or have another agent read the linked
+SKILL.md. The repo installation is the source of truth; do not install a
+second global copy with the same name.
+
+Invocation produces a plan only. File updates and board updates each need
+authorization in the current task. The rule for keeping commits and Trello
+cards aligned is in
+[DECISIONS.md](DECISIONS.md#keep-commit-work-in-sync-with-trello).
+
+The Trello review needs authenticated access to the WorldCovers board.
+Without it, continue the local review and report the board check as pending.
 
 ## Deployment And Operations
 
@@ -203,18 +163,16 @@ for the current configuration and planned changes.
 
 The deployment source of truth is:
 
-- [.github/workflows/verify.yml](./.github/workflows/verify.yml)
-- [.github/workflows/pr-checks.yml](./.github/workflows/pr-checks.yml)
-- [.github/workflows/build-and-deploy.yml](./.github/workflows/build-and-deploy.yml)
-- [.github/workflows/deploy-prod.yml](./.github/workflows/deploy-prod.yml)
+- [docs/devel/DEPLOY.md](./docs/devel/DEPLOY.md#deploy-flow) (manual deploy steps)
 - [deploy/provision.sh](./deploy/provision.sh)
 - [deploy/deploy.sh](./deploy/deploy.sh)
 - [deploy/worldcovers.service](./deploy/worldcovers.service)
 - [deploy/worldcovers-apply-unit.sh](./deploy/worldcovers-apply-unit.sh)
 
-GitHub Actions stops and starts the `worldcovers` service around each deploy.
-The staging and production workflows each run one deployment at a time.
-A running deployment is not canceled by a newer queued run.
+Deploys are run by hand by a maintainer since 2026-10-30 (see
+[DEPLOY.md](./docs/devel/DEPLOY.md#deploy-flow)); the GitHub Actions
+workflows were removed from the repository. The operator stops and starts the
+`worldcovers` service around each deploy and runs one deployment at a time.
 Staging can apply a changed systemd unit through the audited helper; production
 fails closed until a root operator reviews and applies unit changes manually.
 `deploy/deploy.sh` runs dependency sync, migrations, frontend build, and
@@ -240,7 +198,9 @@ one; it is not read by the app and can drift. Treat `VERSION` as canonical.
 
 For licensing details, see [LICENSE](./LICENSE).
 
-Contribution policy and public issue-tracker links are not yet formalized. Coordinate changes through the project team.
+There is no written contribution policy yet. The working flow (branch
+`staging` first, then promotion to `main`) is in
+[How Work Moves](./docs/devel/README.md#how-work-moves).
 
 Parts of this codebase were generated with AI assistance. Changes still require
 human review before acceptance.

@@ -10,10 +10,9 @@ before making a behaviour change. These notes do not establish deployment
 or acceptance. Update a rule when its design choice changes, not after every
 repair or test run.
 
-For earlier reasoning, see the frozen
-[engineering archive](docs/devel/ENGINEERING-ARCHIVE.md) and
-[VPHC decisions](docs/devel/VPHC-DECISIONS.md), including postmaster data.
-Historical instructions in those files do not override current requirements.
+For VPHC ingestion rules, including postmaster data, see
+[VPHC decisions](docs/devel/VPHC-DECISIONS.md). Earlier engineering
+reasoning is in Git history only; it does not override the rules here.
 
 ## Keep Entry Types And Relationships Clear
 
@@ -30,7 +29,7 @@ also sets responsibility for review.
 
 **Evidence:** [Domain model](docs/devel/model.md#domain-tables);
 [models](backend/common/models.py) (`Marking`, `Cover`, `CoverMarking`,
-`Collection`); [Cover approval tests](backend/common/tests/test_cover_contribution_apply.py)
+`Collection`); [Cover approval tests](backend/common/tests/test_cover_submission_apply.py)
 check separate Cover creation and its Marking link.
 
 **Open work:** [S49](docs/devel/design.md#backlog-stories), Personal Collections,
@@ -67,9 +66,9 @@ not establish responsibility for a Collection.
 The [T20 decision](https://trello.com/c/yEfLz6cC) keeps existing-record linking
 restricted to Editors and Administrators; Contributor linking was declined.
 
-**Open work:** [T37](ISSUE.md#other-follow-ups) covers related image and
+**Open work:** [T37](ISSUE.md#f3-submission-workflow) covers related image and
 destination workflows, not approval to widen access.
-[T73](ISSUE.md#t73---scope-image-writes-to-collection-responsibility)
+[T73](ISSUE.md#f5-image-attachments)
 tracks hosted verification and acceptance of Image write checks.
 
 ## Keep Submissions Separate From Publication
@@ -89,9 +88,9 @@ and permissions.
 **Evidence:** [Submission stories S6-S15](docs/devel/design.md#stories);
 [approval and removal paths](backend/common/api/v2/views.py);
 [withdrawal tests](backend/common/tests/test_contribution_withdraw.py) and
-[approval tests](backend/common/tests/test_cover_contribution_apply.py).
+[approval tests](backend/common/tests/test_cover_submission_apply.py).
 
-**Open work:** [T41](ISSUE.md#other-follow-ups) covers further rescind and
+**Open work:** [T41](ISSUE.md#f3-submission-workflow) covers further rescind and
 inactivity rules. Do not invent an expiry period or automatic deletion rule.
 
 ## Preserve Data That An Edit Does Not Change
@@ -112,20 +111,25 @@ and relationship lists are always appended to existing data.
 values as empty can erase information the Contributor never changed.
 
 **Evidence:** [Edit story S7](docs/devel/design.md#stories);
-[approval helpers](backend/common/contribution_apply.py)
-(`_apply_marking_edit`, `_apply_cover_edit`, `_sync_citations`);
+[approval helpers](backend/common/submission_apply.py)
+(`_apply_marking_edit`, `_apply_cover_edit`, `_sync_citations`,
+`_sync_cover_date_seen`);
 [merge tests](backend/common/tests/test_marking_edit_merge.py) and
-[Cover/edit tests](backend/common/tests/test_cover_contribution_apply.py);
+[Cover/edit tests](backend/common/tests/test_cover_submission_apply.py);
 [submission tests](backend/common/tests/test_submission_citations.py) and
 [form tests](frontend/src/pages/SubmissionCitations.test.tsx).
 
-**Open work:** The cover date is the one exception: approval rebuilds it from
-the edit, so an edit without a date clears it (Trello T88 asks Michael whether
-it should keep it instead). The review comparison is below in "Compare An Edit
-Against The Current Entry Before Approval".
-[T72](ISSUE.md#t72---preserve-all-citations-in-multipart-submissions) tracks
+The Cover date follows the same rule: approval
+rewrites the cover's DateSeen only when the edit mentions a cover date key
+(`_COVER_DATE_KEYS`); any mention, even a blank key or
+`cover_date_unknown=false`, rebuilds the date from the edit alone, so a
+mention without a usable date clears it. The Cover form refuses a blank
+date, so its explicit clear is "Date unknown"; the rule also covers API, script and
+older payloads. The review comparison is below in "Compare An Edit Against
+The Current Entry Before Approval".
+[T72](ISSUE.md#f3-submission-workflow) tracks
 hosted verification and acceptance of Citation preservation and explicit
-clearing through the form workflow. [T40](ISSUE.md#other-follow-ups) covers
+clearing through the form workflow. [T40](ISSUE.md#f3-submission-workflow) covers
 cumulative credit; preserve the public-credit rule below when changing edits.
 
 
@@ -154,7 +158,7 @@ county links came from the VPHC import and may be right or wrong; that is an
 Administrator's call, surfaced by the review comparison, not an approval
 side effect.
 
-**Evidence:** Trello T70; [`_link_county` and `describe_county_intent`](backend/common/contribution_apply.py);
+**Evidence:** Trello T70; [`_link_county` and `describe_county_intent`](backend/common/submission_apply.py);
 [approval and verdict tests](backend/common/tests/test_county_link_on_approval.py);
 [edit baseline](backend/common/edit_baseline.py);
 [review comparison](frontend/src/lib/editComparison.ts) and
@@ -176,17 +180,16 @@ consent to change another person's public-name preference.
 **Why:** Corrections must preserve privacy and credit. A username alone can
 identify a Contributor who chose not to receive public credit.
 
-**Evidence:** [Public serializer fix, PR #171](https://github.com/CoverCensus/worldcovers/pull/171);
-[serializers](backend/common/api/v2/serializers.py),
-[approval helpers](backend/common/contribution_apply.py), and
+**Evidence:** [serializers](backend/common/api/v2/serializers.py),
+[approval helpers](backend/common/submission_apply.py), and
 [admin forms](backend/common/admin.py);
 [public-response tests](backend/common/tests/test_marking_public_user_fields.py),
 [preference tests](backend/common/tests/test_submitter_name_preference.py), and
 [form tests](frontend/src/pages/SubmitterNamePreference.test.tsx).
 
-**Open work:** [T40](ISSUE.md#other-follow-ups) requires a cumulative-credit
+**Open work:** [T40](ISSUE.md#f3-submission-workflow) requires a cumulative-credit
 model and each person's opt-in.
-[T78](ISSUE.md#prevent-public-disclosure-of-user-email-and-account-flags)
+[T78](ISSUE.md#f2-collection-discovery)
 retains hosted verification and acceptance. Public reviewer usernames and
 integer audit IDs remain a separate policy question; this rule does not
 claim that every public identity field has been removed.
@@ -211,13 +214,12 @@ Search and display must not make source evidence more precise than it is.
 [date-range tests](backend/common/tests/test_marking_date_range.py) and
 [refresh tests](backend/common/tests/test_date_range_cache.py).
 
-**Open work:** [T42](ISSUE.md#other-follow-ups) adds a separate approximation
+**Open work:** [T42](ISSUE.md#f3-submission-workflow) adds a separate approximation
 qualifier for Markings and Covers. Partial dates do not implement it.
 The [glossary](docs/glossary.md) and
 [Editor submission tests](backend/common/tests/test_contribution_submit.py)
 support direct Editor changes to Marking dates; Contributors supply dates
-through Covers. The guidance correction is archived in
-[T75](https://trello.com/c/GCR4oSI9). Preserve the working Editor path.
+through Covers. Preserve the working Editor path.
 
 ## Account For Historical Regions In Search
 
@@ -238,7 +240,7 @@ and [Marking context](docs/devel/model.md#markings);
 [current filters](backend/common/filters.py);
 [search-result tests](backend/common/tests/test_marking_list_fanout.py).
 
-**Open work:** [Issue 31 / T24](ISSUE.md#issue-31----territory-searchui-surfacing)
+**Open work:** [Issue 31 / T24](ISSUE.md#f2-collection-discovery)
 tracks broader territory search policy. The model describes date-based
 Region context; general filtering currently follows Post Office links,
 with a separate dated VA/WV exception. That exception does not implement
@@ -265,7 +267,7 @@ entry does not prove that every field and relationship can be restored.
 [bulk audit tests](backend/common/tests/test_bulk_review.py) and
 [date audit tests](backend/common/tests/test_date_seen_permissions.py).
 
-**Version restore (Trello T74, 2026-10-23):** restoring a version
+**Version restore (Trello T74):** restoring a version
 reconciles the Entry to its snapshot through one plan object
 ([version_restore.py](backend/common/version_restore.py)) that both the
 `restore-preview` read and the `restore-version` write use, so the preview
@@ -274,7 +276,7 @@ action (files no longer in storage, markings since removed, a snapshot that
 did not record a relationship, Marking->Cover links on a Marking version).
 Don't delete image files during a restore, and don't equate this with the
 recycle-bin restore or a backup restore.
-[S23](ISSUE.md#feature-implementation-surfaces-reviewed-2026-09-13) remains
+[S23](ISSUE.md#f8-audit-trail) remains
 the history-viewing story; [tests](backend/common/tests/test_version_restore.py).
 
 ## Archive Before A Permanent Purge
@@ -302,11 +304,13 @@ restore (`loaddata` plus a media copy) as the editor recycle-bin restore, a
 version restore, or the S25/S26 application backup. Do not sweep orphan rows
 or files from `verify_media_integrity`'s report; it only reports.
 
-**Why:** Trello T51: "restorable archive is verified before erasure;
-dry-run reports scope." A purge used to cascade through Contributions and
-versions it never mentioned, and a database dump carries none of the image
-bytes (BACKUP.md, "both halves, always"). Orphan rows were invisible because
-the polymorphic subject link is not a foreign key. Evidence:
+**Why:** A purge cascades through Contributions and versions that the
+command line never names, and a database dump carries none of the image
+bytes (BACKUP.md, "both halves, always"). Orphan rows are invisible to the
+database because the polymorphic subject link is not a foreign key
+(Trello T51).
+
+**Evidence:**
 `common/purge_archive.py`, `test_purge_recycle_bin.py` (round trip through
 `loaddata`, damaged-archive refusal, per-model count coverage),
 `test_verify_media_integrity.py`.
@@ -316,7 +320,9 @@ the polymorphic subject link is not a foreign key. Evidence:
 **Do:** Let Editors and Administrators add and edit Reference Works on the
 Reference Works page, and make the API's write rule the project's Editor
 definition (a Collection assignment, the review permission, or superuser),
-the same rule the Color, Shape and Lettering endpoints use. Trim text, store
+the same rule the Color, Shape and Lettering endpoints use. Let anyone,
+signed in or not, read Reference Works: they are public bibliography, and the
+signed-out cover page loads the list. Trim text, store
 a blank code as NULL, refuse a title and edition that already exist, bound
 the year, and refuse a change to a code that existing Citations rely on,
 because catalog codes are generated from it. Show a Reference Work on the
@@ -334,14 +340,12 @@ so a single person written "Briggs, Deane R." stays whole; the full
 authorship is unchanged in storage and on the detail pages. Don't create a
 second VPHC1 or ASCC row; edit the existing one.
 
-**Why:** Trello S19: "permitted writes work and unauthorized writes fail;
-the Entry edit displays the first author plus et al. when applicable, with
-room for volume, edition, and date; preserve full authorship and
-comma-containing personal names; API/admin access alone does not satisfy
-the workflow." The previous permission class checked model permissions that
-nothing assigned, so Editors got 403 while admin and superusers could write.
-Reese chose the Editor rule, the year as the date, the inline page, and the
-separator-only author rule on 2026-10-22. Evidence:
+**Why:** Model permissions that no code grants give Editors a 403 while
+admin and superusers can write. API or admin access alone does not satisfy
+the workflow; Editors need the page. Splitting authorship on a comma breaks
+a single person's name (Trello S19).
+
+**Evidence:**
 `common/api/v2/permissions.py` (`CanManageReferenceWorks`),
 `test_reference_work_api.py`, `frontend/src/lib/referenceWorkDisplay.ts` and
 its test, `frontend/src/pages/ReferenceWorks.tsx` and its test.
@@ -393,13 +397,10 @@ requests. Only migration 0024 seeds it; new signup never grants it. Preserve
 this group in auth backups. Do not reopen the retired manual-request API or
 an authentication route that bypasses the verification check.
 
-**Why:** Michael approved these account repairs on 2026-10-24 after local
-regressions exposed inconsistent sessions, password handling, and protections.
-He chose self-service Contributor signup on 2026-10-23, with
-verification required only for new accounts and manual handling retained for
-old pending requests. Address ownership and administrative suspension are
-separate facts. Existing accounts must not lose access or receive fabricated
-verification records.
+**Why:** Address ownership and administrative suspension are separate
+facts. Verification is required only for new accounts; old pending requests
+keep manual handling. Existing accounts must not lose access or receive
+fabricated verification records.
 
 **Evidence:** [account adapter](backend/common/account_adapter.py),
 [browser endpoints](backend/common/api/account.py),
@@ -408,10 +409,16 @@ verification records.
 [account regressions](backend/common/tests/test_auth_reliability.py), and
 [shared-cache test](backend/common/tests/test_auth_shared_cache.py).
 
-**Open work:** [Production rollout and remaining acceptance](ISSUE.md#contributor-email-verification)
-are tracked in ISSUE.md; the October 25 staging signup and permission checks
-are complete. Back up auth data
-and pause account creation while applying the migration and code together.
+**Open work:** [Production rollout and remaining acceptance](ISSUE.md#f1-authentication)
+are tracked in ISSUE.md as T84. Rollout steps, in order:
+
+1. Back up auth data (`./woco backup_auth`).
+2. Pause account creation.
+3. Apply migration 0024 and the code together.
+4. Create the `account_rate_cache` table before workers start
+   (`./woco createcachetable`).
+5. Apply the nginx access-log change.
+
 After new signups exist, retain the verification guards during rollback;
 disable signup if needed rather than restoring an unguarded login route.
 
@@ -435,17 +442,18 @@ a retry control until the site is known.
 
 **Don't:** Post a request from one site to the other, or copy accounts
 between sites through this feature; a stranded account moves only on
-Michael's say-so. The old `POST /login-requests/` now returns 410 on both
+an Administrator's explicit instruction. The old `POST /login-requests/` returns 410 on both
 sites. New Contributor signup depends on verification email; old pending
 requests still use manual activation in admin. Do not send bulk activation
 email or move old requests into the new flow. Do not put requester emails
 in any public or Editor-level response.
 
-**Why:** Trello T84: eight sign-ups made on woco.dev went unnoticed because
-the two sites look identical and a login request is only an inactive User
-row that nothing reports. Reese chose on 2026-10-22 to do both halves
-(route and report) with the site signal from the backend rather than
-hostname sniffing in the SPA. Evidence:
+**Why:** The two sites look identical, and a login request is only an
+inactive User row that nothing reports, so sign-ups made on the test site
+go unnoticed. The site signal comes from the backend, not from hostname
+sniffing in the SPA (Trello T84).
+
+**Evidence:**
 `test_site_and_pending_requests.py`, `Auth.testSite.test.tsx`,
 `PendingLoginRequestsCard.test.tsx`, `Footer.test.tsx`.
 
@@ -464,13 +472,14 @@ changes made.
 in Help that the owner of the material has not granted. Don't quote private
 correspondence or publish contact details beyond the public address. Don't
 change the footer's rights sentence through a Help card; a change to a public
-rights claim is Michael's and Ian's decision.
+rights claim needs approval from the project directors named in
+[acknowledgements.md](docs/acknowledgements.md).
 
-**Why:** Trello T69 asked for rights and attribution guidance while saying
-"this task does not select a new license or publish a rights policy", and
-the repo holds no confirmed terms for ASCC, VPHC or FPHC listings or for
-uploaded images. Reese chose on 2026-10-22 to publish the facts and mark the
-gaps rather than wait. Evidence: `docs/rights-and-attribution.md`,
+**Why:** The repo holds no confirmed terms for ASCC, VPHC or FPHC listings
+or for uploaded images. Help publishes the stated facts and marks the gaps;
+it does not select a license or publish a rights policy (Trello T69).
+
+**Evidence:** `docs/rights-and-attribution.md`,
 `backend/common/api/help.py` allowlist, `test_help_docs_allowlist.py`,
 `Footer.test.tsx`.
 
@@ -495,14 +504,12 @@ it to the public.
 **Evidence:** [Help stories S24/S34](docs/devel/design.md#stories);
 [Help API](backend/common/api/help.py);
 [publication tests](backend/common/tests/test_help_docs_allowlist.py);
-[roster tests](backend/common/tests/test_editor_roster.py);
-[PR #163](https://github.com/CoverCensus/worldcovers/pull/163).
+[roster tests](backend/common/tests/test_editor_roster.py).
 
-**Open work:** [S24/S34](ISSUE.md#feature-implementation-surfaces-reviewed-2026-09-13)
+**Open work:** [S24/S34](ISSUE.md#f9-documentation--help)
 cover Help and article authoring. Repo Markdown is the current article source;
 there is no general article editor in the web interface.
-[T46](https://trello.com/c/evcIZUrt) is Done for the restricted assignment-based
-roster. [T78](ISSUE.md#prevent-public-disclosure-of-user-email-and-account-flags)
+[T78](ISSUE.md#f2-collection-discovery)
 tracks verification and acceptance of the core public-user disclosure fix,
 plus the remaining public-identity policy question. Roster permission tests
 do not establish privacy on other endpoints.
@@ -527,12 +534,12 @@ can work correctly without meeting the interface required by a story.
 **Evidence:** [Maintenance stories S25-S27](docs/devel/design.md#stories);
 [backup script](deploy/worldcovers-backup.sh),
 [restore script](deploy/worldcovers-restore.sh), and
-[deployment workflow](.github/workflows/build-and-deploy.yml);
+[manual deploy flow](docs/devel/DEPLOY.md#deploy-flow);
 [backup/restore safeguards tests](tools/tests/test_backup_scripts.py).
 
-**Open work:** [S25/S26](ISSUE.md#feature-implementation-surfaces-reviewed-2026-09-13)
+**Open work:** [S25/S26](ISSUE.md#f10-system-maintenance)
 require application backup and restore. Existing operator tools do not
-complete them. The same section records Michael's decision that S27 uses
+complete them. S27 uses
 operator tools and does not require an application update interface.
 
 ## Utilities Commit By Default
@@ -546,7 +553,7 @@ utility's normal operation.
 **Why:** Running the utility should perform its stated task. Testing
 without changes is an explicit option.
 
-**Evidence:** Michael's explicit instruction, 2026-09-24.
+**Evidence:** Project decision; no code enforces it.
 
 ## Use The Existing Utility Work Directories
 
@@ -559,17 +566,39 @@ a utility.
 **Why:** One known working area makes utility files easier to find, review,
 and clean up.
 
-**Evidence:** Michael's instruction, 2026-09-24;
-[pipeline paths](docs/devel/PIPELINE.md) and [ignore rules](.gitignore).
+**Evidence:** [pipeline paths](docs/devel/PIPELINE.md) and [ignore rules](.gitignore).
+
+## Keep Bodger Optional For Base WorldCovers
+
+**Do:** Require a separate bodger checkout only for catalog extraction and
+munging. Run its scripts with its own Python environment. Keep prepared-bundle
+imports and base WoCo commands independent of bodger and private GitHub access.
+
+**Don't:** Add bodger to the default WoCo dependency set, import its modules
+during application startup, or run its VPHC comparison scripts in Django's
+environment. Do not add a subscription check to base catalog functions.
+
+**Why:** A society must be able to build its catalog from its own Entries
+without buying extraction services. Bodger's VPHC tools also reject database
+drivers, so sharing WoCo's environment breaks their stated boundary.
+
+**Evidence:** [integration](tools/bodger_tools.py), [ASCC wrapper](tools/ascc_cli.py),
+[boundary tests](tools/tests/test_bodger_tools.py),
+[setup and paths](docs/devel/PIPELINE.md).
+
+**Open work:** [T58](ISSUE.md#new-sources): installation verification and
+acceptance remain.
+Annual service access and licensing terms are proposals, not implemented policy.
 
 ## Keep Commit Work In Sync With Trello
 
-**Do:** Assign the relevant Trello cards and move only the work in the current
-commit to Doing. Run a focused worldcovers-sync-plan review. Develop and test
-the change, then move those cards to Testing. Run worldcovers-code-doc-sync
-for affected rules and a focused worldcovers-sync-plan check before pushing
-and deploying. Apply proposed document and board corrections within the
-approved task scope.
+**Do:** Use worldcovers-sync-plan for the whole reconciliation workflow.
+Assign the relevant Trello cards and move only the work in the current commit
+to Doing within the approved board scope. Review affected code, tests,
+documents, and Trello before implementation. Develop and test the change,
+then verify the affected rules, local corrections, and board state before
+pushing or deploying. Move implemented work to Testing within the approved
+scope. Reuse current evidence and approval instead of repeating the review.
 
 **Don't:** Treat the push or deployment as acceptance, or move cards from
 Testing to Done as part of this commit workflow.
@@ -577,9 +606,7 @@ Testing to Done as part of this commit workflow.
 **Why:** The cards, code, and documents stay aligned as work moves forward.
 Acceptance can be checked separately after the workflow ends.
 
-**Evidence:** Michael's workflow decision, 2026-09-24;
-[sync plan](.agents/skills/worldcovers-sync-plan/SKILL.md) and
-[code and docs sync](.agents/skills/worldcovers-code-doc-sync/SKILL.md).
+**Evidence:** [unified sync plan](.agents/skills/worldcovers-sync-plan/SKILL.md).
 
 ## Keep Test-Only Settings Under `TESTING`
 
@@ -592,12 +619,12 @@ before and after any change that claims a speed-up.
 MariaDB without first proving the per-worker clone is populated, or let a
 test-only setting leak into a production code path.
 
-**Why:** The 2026-10 slowdown (2m50s per deploy) was ~650 PBKDF2 hashes in
-`setUp()`, not the 461 tests; the one-line hasher change cut the suite from
-137 s to 23 s with every test still running. On MariaDB Django clones the
-test database through a `mysqldump | mysql` pipe whose failure it ignores,
-and the GitHub runner ships MySQL 8 client tools that fail against MariaDB.
-Evidence: `docs/issues.md` #179 (workspace register), `verify.yml` comments.
+**Why:** The suite's cost is PBKDF2 password hashing in `setUp()`, not the
+number of tests; the MD5 hasher removes it with every test still running.
+On MariaDB, Django clones the test database through a `mysqldump | mysql`
+pipe whose failure it ignores, so `--parallel` can run against empty clones.
+
+**Evidence:** the `if TESTING:` block in [settings](backend/woco/settings.py).
 
 ## Show Eligible Image Actions With A Reason, Never Hide Them
 
@@ -609,16 +636,14 @@ visible text when the image is unsaved or its destination is missing
 cover from this image" as the Marking-to-Cover path.
 
 **Don't:** Hide a control because a destination list is empty, show a reason
-only in a tooltip, or restore "Move to another marking" (removed at Ian's
-request on 2026-09-21; ISSUE.md T33/T35). Do not widen who may act: roles are
+only in a tooltip, or restore "Move to another marking" or "Link existing cover" on Marking
+detail (both were removed on request). Do not widen who may act: roles are
 unchanged and T20 owns any Contributor change.
 
-**Why:** A hidden control reads as a missing feature; a Delaware editor lost
-two days to one on the marking screen (workspace `docs/issues.md` 166). The
-cover screen had the same defect in the other direction: it passed no
-`onMoveImage` when the cover had no associated Marking and hid move and
-delete for an unsaved image. Evidence: workspace `docs/issues.md` #180;
-`EntryAssociatedThumbnailsCard.test.tsx`, `CoverDetail.imageActions.test.tsx`,
+**Why:** A hidden control reads as a missing feature, and an Editor cannot
+tell why an action is unavailable.
+
+**Evidence:** `EntryAssociatedThumbnailsCard.test.tsx`, `CoverDetail.imageActions.test.tsx`,
 `coverImageActionState.test.ts`.
 
 ## Submit A Marking And Its Cover Together, Approve Each
@@ -646,12 +671,11 @@ Don't cascade a rejection: rejecting or returning the Marking creates
 nothing, and a rejected Marking's cover scan stays only on that row. Don't
 crop on the server or link the two uploads with `cropped_from`.
 
-**Why:** Trello T37 and ISSUE.md say both Entries require approval; the 23 Sep
-triage said one approval; this follows the card. Michael did not answer the
-7 Oct memo's five questions, and model changes are his lane, so Reese chose
-the no-migration design on 2026-10-22 (Ian asked for the flow on 10-16, 10-19
-and 10-22). The parent-FK design in the memo remains the upgrade path if
-side-by-side review is wanted. Evidence: `test_pending_cover.py`,
+**Why:** A Marking and a Cover are separate Entries and each needs its own
+review (Trello T37). Two stamped ids give the link without a migration. A
+parent foreign key is the upgrade path if side-by-side review is wanted.
+
+**Evidence:** `test_pending_cover.py`,
 `Contribute.pendingCover.test.tsx`, `contributionDisplay.pendingCover.test.ts`.
 
 ## Use One Frontend Submission Definition
@@ -666,11 +690,12 @@ Add review tests when a field changes what an Editor must see.
 page-level key whitelist. If an API field is unrecognized, keep known details
 readable and disable approval on that review page until it can show the data.
 
-**Why:** Separate field lists missed `pending_cover` and earlier VPHC fields,
-which prevented Editors from reading valid Submissions. Django still stores
-the data on a Contribution; this change defines its frontend shape. Evidence:
-`submission.test.ts`, `ContributionDetail.pendingCover.test.tsx`, and
-`ContributionDetail.permissions.test.tsx`.
+**Why:** Separate per-page field lists miss fields such as `pending_cover`,
+which stops Editors from reading valid Submissions. Django still stores
+the data on a Contribution; `submission.ts` defines its frontend shape.
+
+**Evidence:** `submission.test.ts`, `SubmissionDetail.pendingCover.test.tsx`, and
+`SubmissionDetail.permissions.test.tsx`.
 
 ## Approve Images In The Order The Contributor Arranged
 
@@ -685,14 +710,12 @@ edit exactly as on a create, including the "no metas, one carried image" case.
 **Don't:** Append the carried image after the uploads, copy or re-upload it,
 delete and recreate it, or run `_sync_images` after the repoint.
 
-**Why:** The form and the review page showed the carried tile where the
-contributor put it (first by default) while approval appended it last, so the
-published cover disagreed with what both screens had shown. The cover-edit
-applier never called the repoint at all. Workspace `docs/DECISIONS.md`
-2026-09-27 had left this "on purpose, on the T37 card"; closed here. Evidence:
-`CarriedOverMarkingImageTests`, `CarriedOverImageOnCoverEditTests`,
-`CarriedImagePositionHelperTests`, `coverFromImageHandoff.test.ts`; workspace
-`docs/issues.md` #181.
+**Why:** The form and the review page show the carried tile where the
+Contributor put it (first by default). Appending it last on approval makes
+the published Cover disagree with what both screens showed.
+
+**Evidence:** `CarriedOverMarkingImageTests`, `CarriedOverImageOnCoverEditTests`,
+`CarriedImagePositionHelperTests`, `coverFromImageHandoff.test.ts`.
 
 ## Crop Into A Destination Only Through The Crop Endpoint
 
@@ -712,13 +735,12 @@ request behind it, or move or delete the source.
 **Why:** One request keeps the operation atomic and auditable through a
 single row with `cropped_from`; a client composition would leave a stray
 Cover image whenever the second call failed. Both crop and ordinary Image
-writes now check Collection responsibility (T73); keep those checks when
-adding a destination. This reverses the crop docstring's earlier
-"crop and move stay separate, composable operations" for this one
-destination; the default same-subject crop is unchanged. Evidence:
-`ImageCropIntoMarkingTests`; `permissions.py`
-`user_is_responsible_for_subject`; `coverImageActionState.test.ts`;
-workspace `docs/issues.md` #182.
+writes check Collection responsibility (T73); keep those checks when
+adding a destination. The default same-subject crop stays a separate
+operation.
+
+**Evidence:** `ImageCropIntoMarkingTests`; `permissions.py`
+`user_is_responsible_for_subject`; `coverImageActionState.test.ts`.
 
 ## Marking Edits Add Images Only
 
@@ -735,12 +757,13 @@ reorder of current images, or "No image is available" from a Marking edit, or
 require a Marking edit to carry an image. New-Marking submissions and Cover
 edits keep their full gallery controls.
 
-**Why:** Ian, 2026-10-14: existing images appearing on the edit screen "don't
-think we want that ... we don't want contributors getting that". Any signed-in
-user could propose deleting every image on a Marking, and the review screen
-showed only the resulting list, never the removals, so an editor could approve
-a deletion without seeing it. Approval enforces the rule independently of the
-form, so payloads queued before this change cannot delete either. Evidence:
+**Why:** Otherwise any signed-in user can propose deleting every image on a
+Marking, and the review screen shows only the resulting list, never the
+removals, so an Editor can approve a deletion without seeing it. Approval
+enforces the rule independently of the form, so older queued payloads
+cannot delete either.
+
+**Evidence:**
 `test_marking_edit_cannot_remove_retag_or_clear_existing_images`,
 `test_approved_marking_edit_keeps_current_images_and_appends_uploads`,
 `MarkingEditImages.test.tsx`.
@@ -764,19 +787,15 @@ catalog at once), submit the uncropped original alongside the crop, or offer
 Crop on a Marking's current images in the form (they are read-only; editors
 crop them on the Marking page).
 
-**Why:** Ian, 2026-10-14: "As folks usually have the whole cover, could you
-add the crop function to the edit marking screen so that the user can crop out
-the marking itself before submission." Cropping before submission keeps the
-change inside the normal review flow: the reviewer sees exactly the image that
-would be published. Reese chose to replace rather than keep the original
-(2026-10-14). This does not conflict with "Crop Into A Destination Only
-Through The Crop Endpoint", which governs catalog images. A canvas keeps no
-metadata, so the low-resolution notice keeps the result measured on the
-original. T66 (rotation) can extend the same dialog. Evidence:
-`cropImageFile.test.ts`; a headless-Chromium run of `/edit/:id` against a
-mocked API posted a 440x440 crop of a 2400x1500 scan.
-Michael chose PNG storage over further JPEG compression on 2026-10-18.
-Normalization and pixel preservation are covered by
+**Why:** Contributors usually hold a scan of the whole Cover. Cropping
+before submission keeps the change inside the normal review flow: the
+reviewer sees exactly the image that would be published. The crop replaces
+the upload among the Marking's images. This does not conflict with "Crop
+Into A Destination Only Through The Crop Endpoint", which governs catalog
+images. A canvas keeps no metadata, so the low-resolution notice keeps the
+result measured on the original. PNG avoids further JPEG compression loss.
+
+**Evidence:** `cropImageFile.test.ts`. Normalization and pixel preservation are covered by
 `ImageUploadNormalizationTests` and `ImageCropOrientationTests`; multipart
 storage is covered by `ImageWritePermissionTests`.
 
@@ -817,18 +836,16 @@ overshoots the turned bounds by up to 2 px is clamped.
 reuse its filename, delete the previous file, store the running (unbounded)
 handle angle, or rotate a pending submission's image on the review page.
 
-**Why:** Ian, 2026-10-16: "After a marking image (only markings and not
-covers) is there an easy way to allow for rotation"; on 2026-10-19 he agreed
-Cover images can rotate too and asked to "rotate the cover slightly to crop
-the marking so it's in the right orientation". T66 first shipped quarter
-turns; Reese replaced them the same evening with free mouse rotation "360
-degrees, in either direction, indefinitely, until you hit crop or save", and
-chose the snap, the white corners and the crop handle. A rotated copy added
+**Why:** Editors need to straighten a tilted strike, on Markings and on
+Covers, before cropping it (Trello T66). Quarter turns alone cannot do
+that. A rotated copy added
 like a crop would leave the sideways image as the default. `/media/` is
 served with `expires 30d`, so only a new filename shows the turn at once,
 and `storage_filename` can be shared by several rows, so the old file stays.
 The review page has no pending-image edit path; an editor approves, then
-rotates. Evidence: `test_image_rotate.py`, `test_image_crop.py`,
+rotates.
+
+**Evidence:** `test_image_rotate.py`, `test_image_crop.py`,
 `imageRotation.test.ts`, `rotateImageFile.test.ts`, `cropImageFile.test.ts`,
 `markings.rotate.test.ts`, `markings.cropDestination.test.ts`,
 `CoverDetail.imageActions.test.tsx`, `ImageCaptions.test.tsx`.
@@ -845,19 +862,30 @@ onto `Image.image_description`. Show a caption as a `<figcaption>` under the
 main image on the Marking and Cover pages and both review pages; show a
 draft's saved caption read-only on its tile.
 
+The Cover staged on a new-Marking form (T37, `PendingCoverSection`) captions
+its images the same way: `pending_cover_image_descriptions` is positional over
+`pending_cover_image`, and `pending_cover_existing_image_descriptions`
+({storage filename or displayed URL: caption}, "" clears) recaptions images
+saved with the draft. Both land on `pending_cover.image_metas`, which the child
+cover submission carries to approval. Seeding the section from a Marking tile
+copies that tile's caption. The T92 "Cover draft" offer on a Marking edit sends
+the tile's caption as `cover_image_descriptions`. Pending-cover captions are
+checked with the other captions, before any file is written.
+
 **Don't:** Edit the caption of a catalog image through a Marking or Cover edit
 (Marking edits stay add-only; a Cover edit's kept rows keep their caption) --
 saved captions change through "Edit A Saved Image's Caption As An Audited
 Action" below. Don't copy the caption into `alt`, or hide the
 "Front"/"Back"/"Details" view labels that v1 imports wrote into the same field.
 
-**Why:** Trello T43 asks for editable per-upload captions and reuse of
-`image_description`. Riding the metas needs no model change and no approval
+**Why:** Captions reuse `image_description` (Trello T43). Riding the metas needs no model change and no approval
 change, and drafts already keep metas as they are. Django does not enforce
 `max_length` on a `TextField`, so the API sets the cap. WAI advises that alt
-text should not repeat a caption. Reese chose new uploads only and showing the
-v1 labels as they are on 2026-10-19; changing that data is Michael's call.
-Evidence: `test_image_captions.py`, `ImageCaptions.test.tsx`.
+text should not repeat a caption. Changing the v1 view labels is a separate
+data decision.
+
+**Evidence:** `test_image_captions.py`, `test_pending_cover.py`, `ImageCaptions.test.tsx`,
+`Contribute.draftCover.test.tsx`.
 
 ## Compare An Edit Against The Current Entry Before Approval
 
@@ -869,7 +897,7 @@ from (`backend/common/edit_baseline.py`). `lib/editComparison.ts` lays the
 edit's fields over that baseline the way approval does: an omitted field keeps
 its value, `""` clears it, a manuscript drops shape and lettering, marking
 ERD/LRD are added as recorded dates, an empty Cover type or flag keeps its
-value, and an edit with no Cover date clears that date. Both columns go through
+value, and an omitted Cover date keeps its value (T88). Both columns go through
 the same formatter. Changed rows carry a "Changed" badge as well as a tint, and
 every compared row stays listed.
 
@@ -879,11 +907,12 @@ those strings with the submission (state name vs abbreviation, `28.00` vs
 preview, and don't send the baseline to anyone but a reviewer or for a decided
 edit.
 
-**Why:** Trello T39: "an Editor can identify changed and unchanged values
-before deciding." Mirroring approval's merge rules is what makes the table tell
+**Why:** An Editor must be able to tell changed from unchanged values
+before deciding (Trello T39). Mirroring approval's merge rules is what makes the table tell
 the truth about the Approve button. WCAG 1.4.1 asks that colour not be the only
 signal of a change.
-Evidence: `test_contribution_edit_baseline.py`, `editComparison.test.ts`,
+
+**Evidence:** `test_contribution_edit_baseline.py`, `editComparison.test.ts`,
 `EditComparisonCard.test.tsx`.
 
 
@@ -909,16 +938,17 @@ The prefill runs once, after the option lists load.
   `original_marking_id`, `marking_id` or `cover_id`.
 - Record a "copied from" key.
 
-**Why:** Trello T44 asks for a new submission that "never updates the source
-Entry or inherits approval/identity". Leaving out the target keys makes the
+**Why:** A copy must never update the source Entry or inherit its approval
+or identity (Trello T44). Leaving out the target keys makes the
 backend treat a copy as a plain create: a new row, a new catalog code and a
 fresh review. The catalog code is unique, so carrying it would fail approval.
 The submitter-name choice belongs to the source's creator. Images, dates and
 the comment describe the source item itself. The provenance keys the code
 already reads are target keys, so recording a source through them would turn a
 copy into an edit and remove the copier's pending edits of the source.
-Similar-entry warnings belong to T48. Reese chose this scope on 2026-10-19.
-Evidence: `CreateSimilar.test.tsx`.
+Similar-entry warnings are a separate rule, below.
+
+**Evidence:** `CreateSimilar.test.tsx`.
 
 ## Edit A Saved Image's Caption As An Audited Action
 
@@ -933,7 +963,7 @@ the image's Marking or Cover, with the previous and new caption in
 `extra_payload`, and writes a Marking or Cover version. An unchanged caption
 logs nothing. Both changelogs expose the two strings as `caption_change`, and
 Record History shows `Caption: "old" -> "new"`. The Cover page's Record History
-now reads the Cover's own changelog rather than its parent Marking's.
+reads the Cover's own changelog rather than its parent Marking's.
 
 On a resumed draft, images saved with the draft also take an editable caption.
 The form sends only changed ones as `existing_image_descriptions`
@@ -947,13 +977,12 @@ add-only), a Cover edit's kept images, or the image carried by "Create cover
 from this image" (none of these were in scope). Don't return a transaction's
 whole `extra_payload` from the changelog; rotate stores storage details there.
 
-**Why:** Trello T87 (split from T43). Its acceptance: "a caption changed through
-each chosen route is saved, appears in Record History, and shows on the detail
-page." Reese chose the editor action and drafts, the Cover's own history and
-old -> new in history on 2026-10-19. "Marking Edits Add Images Only" already
+**Why:** A caption change must be saved, appear in Record History, and show
+on the detail page (Trello T87). "Marking Edits Add Images Only" already
 says existing images change on the Marking page, where editor responsibility is
-checked. Migration `0021_image_caption_changed_action` adds the choice only.
-Evidence: `test_image_caption_edit.py`, `CoverDetail.imageActions.test.tsx`,
+checked.
+
+**Evidence:** migration `0021_image_caption_changed_action`, `test_image_caption_edit.py`, `CoverDetail.imageActions.test.tsx`,
 `EntryRecordHistoryCard.caption.test.tsx`, `ImageCaptions.test.tsx`.
 
 
@@ -974,7 +1003,7 @@ which is the pipeline's `merge_equal_v1_markings` rule on database rows;
 otherwise it is NEAR, and each row names its identical twins. Dates are
 shown per row with a group `dates_overlap` verdict and only filtered on
 `--require-date-overlap`. T48's submission-time "similar Entries" warning
-reuses this key rather than inventing a second one. Since T48 the keys,
+reuses this key rather than inventing a second one. The keys,
 `primary_region_subquery` and `town_match_key` live in `common/matching.py`;
 the report, the API and approval all import them from there.
 
@@ -987,13 +1016,12 @@ two Regions is one Marking ("Account For Historical Regions In Search").
 Don't resolve `--state` with a bare abbreviation lookup; county rows carry
 the state's abbrev (#103), so use `Region.primary_for_state_term`.
 
-**Why:** Trello T47. The colour repair left "markings that become
-colour-identical after a merge" for T47, and the munger's own merge rule
-needs the raw v1 source row, which the database does not hold, so only its
-attribute half carries over. Reese chose two tiers, dates shown and filtered
-by flag, and CSV plus console with live rows only on 2026-10-20. The local
-staging-shaped database (3,155 Markings) reports 227 groups, 159 of them
-EXACT, which is the review workload the tiers were sized for. Evidence:
+**Why:** Two Markings that match on these attributes may still be two real
+devices; only a person with the source can tell. The munger's own merge
+rule needs the raw v1 source row, which the database does not hold, so only
+its attribute half carries over (Trello T47).
+
+**Evidence:**
 `test_report_duplicate_markings.py`; `docs/devel/TOOLS.md`
 "report_duplicate_markings".
 
@@ -1029,13 +1057,14 @@ catalog-code suggestion effect already shows the effect-and-cancel pattern.
 Don't flash a "checking..." box on every settled keystroke; the panel renders
 only when it has rows and keeps them while a refresh is in flight.
 
-**Why:** Trello T48. Its acceptance: "useful candidate previews without false
-claims of identity." Reese chose the two tiers, advisory only, the placement
-and client-side Covers on 2026-10-20, following the repo's own precedent
+**Why:** The panel offers candidate previews without claiming identity
+(Trello T48). Advisory-only follows the repo's own precedent
 (`alert.tsx` warning is "advisory, not an error"; image warnings say "you can
 still submit"; T34 keeps acknowledge-and-continue). The office-first lookup
 bounds the cost to one town (Richmond, the largest, is ~150 rows) on a public
-endpoint with no throttle classes. Evidence: `test_similar_markings_api.py`,
+endpoint with no throttle classes.
+
+**Evidence:** `test_similar_markings_api.py`,
 `SimilarEntriesPanel.test.tsx`, `Contribute.similar.test.tsx`,
 `lib/similarEntries.test.ts`.
 
@@ -1045,8 +1074,8 @@ endpoint with no throttle classes. Evidence: `test_similar_markings_api.py`,
 `FieldHelp` tooltip (Trello S33) whose text is the glossary's definition of
 the term (`docs/glossary.md`, served at `/help/glossary`), kept in
 `labels/guidelines.ts` as one named export per field. Place it as a sibling
-of the field's `Label` inside a `flex items-center gap-1` row, the way
-`f9351f3` placed Lettering, Impression and Is Irregular. For a checkbox
+of the field's `Label` inside a `flex items-center gap-1` row, as on
+Lettering, Impression and Is Irregular. For a checkbox
 named by a wrapping `<label>`, put the help outside that label. Keep the
 existing visible helper text where a field needs an instruction (Inscription,
 Town, Date format, dimensions): persistent text for touch and screen-reader
@@ -1059,18 +1088,15 @@ control to "... Help for ..." and toggles it on click), inside an image drop zon
 tracing or submitter-name controls. Don't repeat visible helper text in a
 tooltip beside it. Don't change `FieldHelp`'s contract (it describes its own
 button through `aria-describedby`; linking the input itself is a possible
-later refinement). Don't let in-app help drift from the glossary: the
-date-format example once said "MD = Month / Day" against the glossary's
-"Month date only", and the marking-type guideline used the retired "Rate
-Mark" / "town mark" names.
+later refinement). Don't let in-app help drift from the glossary: for
+example, MD means "Month date only", and the type names are Townmark,
+Ratemark and Auxmark.
 
-**Why:** Trello S33 ("add concise help to textual fields using the project's
-defined terms"; "do not close S33 on the basis of these three fields alone").
-Reese chose both forms and the string corrections on 2026-10-20, leaving the
-Search filters for a follow-up. `MarkingEditImages.test.tsx` rendered the form
-without a `TooltipProvider` and only passed because its fixture was a
-manuscript Marking; always-visible help made the provider mandatory.
-Evidence: `FieldHelpCoverage.test.tsx`, `guidelines.test.ts`,
+**Why:** Field help uses the project's defined terms so the form and the
+glossary never disagree (Trello S33). Hover-only text is unreachable on
+touch screens. Every test that renders a form needs a `TooltipProvider`.
+
+**Evidence:** `FieldHelpCoverage.test.tsx`, `guidelines.test.ts`,
 `FieldHelp.test.tsx`.
 
 ## Offer A Draft Cover From A Marking Edit
@@ -1096,18 +1122,18 @@ other submission), and never list a draft to anyone but its author: the
 contributions list is owner-scoped and `?mode=editor` excludes drafts, which
 `test_cover_draft_visibility.py` pins (an Editor assigned to the Collection or
 an Administrator can still open a draft by id, as before; that retrieve rule
-is Michael's to change). Don't add a server filter by parent
+needs a model-level decision to change). Don't add a server filter by parent
 marking, a model field, or an Editor path for this; linking existing
 Entries stays Editor-only (T20). The offer measures uploads made in the
 current session: an image already saved with an edit draft comes back as a
 URL, is not re-measured, and gets no offer; the contributor removes it from
 the resumed edit and uploads it on Submit New Cover instead.
 
-**Why:** Trello T92, part (c) of the 7 Oct T37 memo; its three open questions
-were answered by Reese on 2026-10-23 (draft, drafts only, moved). This
-reverses the May 2026 choice (`19374cd`) that kept drafts off the record
-panel: a draft made from an edit has no other natural home, and the owner
-must be able to find and finish it. Evidence:
+**Why:** A draft made from an edit has no other natural home, and its
+author must be able to find and finish it (Trello T92). This is the one
+case where a draft appears on the record page.
+
+**Evidence:**
 `frontend/src/pages/Contribute.draftCover.test.tsx`,
 `frontend/src/services/markings.coverDrafts.test.ts`,
 `frontend/src/components/WrongImageKindWarning.test.tsx`,
@@ -1129,11 +1155,9 @@ template, subject line or document by hand. Do not rename the localStorage
 keys (`worldcovers_user`, `worldcovers.*`): that signs every user out. Do
 not change the `worldcovers.org` mail addresses; they are real.
 
-**Why:** The U.S. Philatelic Classics Society decided on 2026-10-23 that
-the catalog presents as APMC with the Society seal on every screen. The
-first rename found the old name typed in nine frontend places, three email
-sets and four Help docs, with no single source; one constant per side makes
-the next change a one-line edit. Internal identifiers are not branding.
+**Why:** The catalog presents as APMC with the Society seal on every
+screen, by decision of the U.S. Philatelic Classics Society. One constant
+per side makes a rename a one-line edit. Internal identifiers are not branding.
 
 **Evidence:** [brand constants](frontend/src/constants/brand.ts),
 [account adapter](backend/common/account_adapter.py),
@@ -1155,13 +1179,10 @@ two `/filters` calls in `frontend/src/lib/api.ts` are slashless but dead
 nginx config to route one. Do not drop the slashless account routes while
 an older bundle may still be cached.
 
-**Why:** On 2026-10-26 hellowoco.app's nginx answered every slashless
-`/api/v2/auth/*` request with its own 301 to the slashed URL. A browser
-replays a redirected POST as a GET, and the slashed URL was a Django 404,
-so sign-in, signup and email verification failed for everyone on
-production while woco.dev, serving the same bundle, worked. The repo nginx
-template has no such rule; production's config had drifted from it.
-Password reset kept working because its URLs already ended in a slash.
+**Why:** A host's nginx can answer a slashless request with its own 301 to
+the slashed URL. A browser replays a redirected POST as a GET, so sign-in,
+signup and email verification fail for everyone on that host. The repo
+nginx template has no such rule, but a host's config can drift from it.
 
 **Evidence:** [account routes](backend/common/api/account.py),
 [diagnostics map](backend/common/auth_diagnostics.py),
@@ -1178,13 +1199,123 @@ none, and the trailing slash is removed.
 **Don't:** Re-normalize the value at a call site, or build an email link
 from a raw `.env` value.
 
-**Why:** Production's `.env` sets `FRONTEND_BASE_URL=hellowoco.app` with no
-scheme. The reset and activation emails each added `https://` themselves,
-but `HEADLESS_FRONTEND_URLS` did not, so allauth treated the confirm link as
-relative and resolved it against the signup API path:
+**Why:** A host's `.env` can set `FRONTEND_BASE_URL=hellowoco.app` with no
+scheme. allauth then treats the confirm link as relative and resolves it
+against the signup API path:
 `https://hellowoco.app/api/v2/auth/signup/hellowoco.app/verify-email?key=...`,
-a 404 for every new account (2026-10-27, found once signup worked again).
+a 404 for every new account.
 
 **Evidence:** [normalizer](backend/woco/site_role.py),
 [settings](backend/woco/settings.py),
 [tests](backend/common/tests/test_site_and_pending_requests.py).
+
+## Return To The Row You Left
+
+**Do:** Keep the catalog cursor (the exact list query the catalog ran and
+the row that was opened) in sessionStorage beside the view mirror
+(`frontend/src/lib/catalogCursor.ts`). Scroll the opened row
+back into view when the same view renders again. Derive Previous/Next on
+a Marking page by replaying that stored query, so the sequence is the
+list's own sort (the backend ordering always ends in `id`). Skip the
+route-level scroll-to-top on a history pop. Stepping moves the cursor
+with the viewer, so after a chain of steps Back returns to the last row
+stepped to, not to an earlier record reached through the browser's own
+history; a record opened from the Dashboard gets no catalog neighbours.
+
+**Don't:** Use `navigate(-1)` or router location state for the return
+path (a deep link leaves the site; state is lost on reload). Store a
+pixel scroll offset (it breaks when the page size or viewport changes).
+Parse the catalog URL a second time to rebuild the list query; the
+catalog hands over the options object it used.
+
+**Why:** Without the cursor, Back from a Marking drops an Editor at the top
+of a long list, and there is no way to step to the next Marking. The
+return path is a sessionStorage
+mirror, not router state, because detail pages are reloaded and reached
+several navigations deep, and router state survives neither. The cursor
+extends that one mechanism (Trello T95).
+
+**Evidence:** [cursor](frontend/src/lib/catalogCursor.ts),
+[scroll reset](frontend/src/components/ScrollToTop.tsx),
+[neighbours](frontend/src/hooks/useCatalogNeighbours.ts),
+[catalog restore test](frontend/src/pages/Search.returnRow.test.tsx).
+
+## Cite The Catalog A Listing Came From
+
+**Do:** Give an imported Marking a Citation to the Reference Work its
+listing came from. A legacy (v1) Marking that has original catalog text
+cites `ASCC6`. A Florida Marking that has a catalog Type label cites
+`FPHC2`. Keep the Citations a Marking already has when adding one.
+
+**Don't:** Add `ASCC6` because a Marking has catalog text that the importer
+generated from split fields; that text does not show the listing came from
+the ASCC. Don't treat a Marking with no Citation as a defect: completely
+new work may be uncited. Don't invent a page number or other locator.
+Don't generalize from Marking 21789 (North Mountain), which was revised
+from the VPHC and cites `VPHC1` only by a one-time decision; ask before
+replacing a Citation on any other Marking.
+
+**Why:** A listing taken from a catalog is accepted as genuine on that
+catalog's authority. A wrong Citation claims a source that did not say it.
+
+**Evidence:** [Citation and ReferenceWork models](backend/common/models.py).
+
+**Open work:** [Issue 24 / T19](ISSUE.md#data-corrections) tracks acceptance
+of the production Citation pass.
+
+## Ask For A State's Notation Before Loading It
+
+**Do:** Before running a new state through the catalog pipeline, notify
+Ian Gibson-Smith so he can supply that state's notation and quirks. Record
+source preparation, the staging and production revisions, review, and
+acceptance on Trello card T13 as the state moves.
+
+**Don't:** Treat a finished batch as permission for another import or for
+new Editor invitations. Don't treat a suggested Editor as an appointment
+or a permission assignment. Don't assume staging and production hold the
+same records.
+
+**Why:** Each state's catalog section uses its own notation. Loading
+without it produces parsing errors that Editors then have to find by hand.
+
+**Evidence:** MD/MI review Batch #31.
+
+**Open work:** [State rollout](ISSUE.md#state-rollout).
+
+## Color Display Values Are Screen Choices, Not Measurements
+
+**Do:** Show a Color's name in its stored hex value in Catalog Search and
+on Marking detail, on a contrasting background, with plain text as the
+fallback when no value is stored. Set values with
+`./woco set_color_display_hex --actor <user id>`; add `--dry-run` to
+preview. Run from the repo root; expected exit code 0.
+
+**Don't:** Describe a display value as a measured ink color or a Pantone
+match. Don't change a Color's name, Pantone code, or Entry links when
+setting a display value.
+
+**Why:** The values were chosen by eye for the screen. Catalog readers
+would otherwise take them as evidence about the ink.
+
+**Evidence:** [command](backend/common/management/commands/set_color_display_hex.py).
+
+**Open work:** [T82](ISSUE.md#f2-collection-discovery) hosted visual check.
+Measured comparison is the separate deferred wish T53.
+
+## Hide Shape And Dimensions For Manuscript Markings
+
+**Do:** Omit Shape and Dimensions for a Manuscript Marking in catalog
+search results and on Marking detail. When the Manuscripts: Only filter is
+on, hide the Shape and Dimensions filters and clear their values,
+including values that arrive in a saved search URL.
+
+**Don't:** Show an empty Shape or Dimensions field for a Manuscript
+Marking, or let a stale Shape filter empty a Manuscripts: Only search.
+
+**Why:** A Manuscript Marking has no Shape (see the glossary). A hidden
+filter that still applies returns no results and looks like missing data.
+
+**Evidence:** [display tests](frontend/src/components/CatalogRecordFields.test.tsx)
+and [search tests](frontend/src/pages/Search.manuscripts.test.tsx).
+
+**Open work:** [Hosted check](ISSUE.md#f2-collection-discovery); no card.

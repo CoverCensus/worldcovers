@@ -74,8 +74,7 @@ production build steps (`deploy/deploy.sh`); see [DEPLOY.md](DEPLOY.md).
 
 ## Prerequisites
 
-- Local development has been tested on macOS. Linux should work with the same
-  commands when the prerequisites below are installed.
+- Local development has been tested on macOS and on Ubuntu Linux under WSL2.
 - `woco.bat` is included as a convenience wrapper for Windows cmd.exe and
   PowerShell, but the primary documented setup path is macOS/Linux shell.
 - Python 3.13 (installed automatically by `uv` from `.python-version`)
@@ -83,14 +82,15 @@ production build steps (`deploy/deploy.sh`); see [DEPLOY.md](DEPLOY.md).
 - Node.js and npm (for the frontend build)
 - MariaDB, running locally, with the `mariadb` client on PATH
 
-Use MariaDB for local development, CI, staging, and production. Setup checks
-the connected server before database bootstrap or migrations and rejects MySQL.
+Use MariaDB for local development, manual verification, staging, and production.
+Setup checks the connected server before database bootstrap or migrations and
+rejects MySQL.
 The Django backend name `django.db.backends.mysql`, the `mysqlclient` Python
 package, `mysql.cnf`, and `WOCO_MYSQL_ROOT_PASSWORD` remain compatibility names;
 they do not select a MySQL server.
 
-CI tests MariaDB 12.3 LTS for staging and 10.11 for production. Setup checks
-the server family, not a fixed release series. See
+Manual verification uses MariaDB 12.3 LTS for staging and 10.11 for production.
+Setup checks the server family, not a fixed release series. See
 [database versions](DEPLOY.md#database-versions) for the current configuration
 and planned changes.
 
@@ -276,12 +276,12 @@ The Python audit checks application and development dependencies. Findings,
 an outdated lockfile, or an audit service failure stop verification. The npm
 audit stops verification for findings rated moderate or higher.
 
-[verify.yml](../../.github/workflows/verify.yml) defines the shared CI checks.
-Pull requests and both deploy workflows call it. CI uses Node 22, the pinned
-Python version, and a MariaDB service: 12.3 LTS for staging deploys and PRs
-targeting `staging`, and 10.11 for production deploys and other PRs. Deployment
-starts only after both the frontend and backend jobs pass. The frontend build
-is also uploaded as an artifact; the server deploy builds the frontend again.
+These checks are run locally by the person who merges and deploys; there is
+no CI service since 2026-10-30 (see [DEPLOY.md](DEPLOY.md#deploy-flow)). Use
+Node 22, the pinned Python version, and MariaDB: 12.3 LTS when the target is
+`staging`, 10.11 when the target is `main`/production. Deploy only after both
+the frontend and backend checks pass on the merged commit; the server deploy
+builds the frontend again.
 
 ## Seeding and ETL
 

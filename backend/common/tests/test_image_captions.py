@@ -12,7 +12,7 @@ from PIL import Image as PILImage
 from rest_framework.test import APIClient
 
 from common.models import (
-    Collection, Contribution, Image, Marking, PostOffice, PostOfficeRegion, Region,
+    Collection, Submission, Image, Marking, PostOffice, PostOfficeRegion, Region,
 )
 
 
@@ -66,27 +66,27 @@ class ImageCaptionSubmissionTests(TestCase):
             with self.subTest(kind=kind):
                 self.client.force_authenticate(self.user)
                 response = self.client.post(
-                    "/api/v2/contributions/",
+                    "/api/v2/submissions/",
                     self.payload(kind, ["  Strike on the front  ", ""]),
                     format="multipart",
                 )
                 self.assertEqual(response.status_code, 201, response.data)
-                contribution = Contribution.objects.get(pk=response.data["id"])
-                metas = contribution.submitted_data[meta_key]
+                submission = Submission.objects.get(pk=response.data["id"])
+                metas = submission.submitted_data[meta_key]
                 self.assertEqual(
                     [m.get("image_description") for m in metas],
                     ["Strike on the front", None],
                 )
-                self.assertNotIn(meta_key.replace("metas", "descriptions"), contribution.submitted_data)
+                self.assertNotIn(meta_key.replace("metas", "descriptions"), submission.submitted_data)
 
                 self.client.force_authenticate(self.editor)
                 approved = self.client.post(
-                    f"/api/v2/contributions/{contribution.pk}/approve/", {}, format="json"
+                    f"/api/v2/submissions/{submission.pk}/approve/", {}, format="json"
                 )
                 self.assertEqual(approved.status_code, 200, approved.data)
-                contribution.refresh_from_db()
+                submission.refresh_from_db()
                 subject_id = (
-                    contribution.marking_id if kind == "MARKING" else approved.data["coverId"]
+                    submission.marking_id if kind == "MARKING" else approved.data["coverId"]
                 )
                 rows = Image.objects.filter(
                     subject_type=kind, subject_id=subject_id
@@ -99,7 +99,7 @@ class ImageCaptionSubmissionTests(TestCase):
         files_before = sorted(Path(MEDIA_ROOT).rglob("*.png"))
         self.client.force_authenticate(self.user)
         response = self.client.post(
-            "/api/v2/contributions/",
+            "/api/v2/submissions/",
             self.payload("MARKING", ["ok", "x" * 501]),
             format="multipart",
         )
@@ -108,5 +108,5 @@ class ImageCaptionSubmissionTests(TestCase):
         self.assertEqual(
             response.data["detail"], "Caption for image 2 is longer than 500 characters."
         )
-        self.assertFalse(Contribution.objects.exists())
+        self.assertFalse(Submission.objects.exists())
         self.assertEqual(sorted(Path(MEDIA_ROOT).rglob("*.png")), files_before)

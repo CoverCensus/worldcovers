@@ -9,7 +9,7 @@ from common.collection_archive import collection_scope
 from common.collection_removal import delete_contents, remove_transferred_collection
 from common.models import (
     Collection,
-    Contribution,
+    Submission,
     CoverMarking,
     Marking,
     PostOffice,
@@ -79,7 +79,7 @@ class Command(BaseCommand):
                     "covers": set(CoverMarking.objects.filter(
                         marking_id__in=markings,
                     ).values_list("cover_id", flat=True)),
-                    "contributions": set(Contribution.objects.filter(
+                    "submissions": set(Submission.objects.filter(
                         marking_id__in=markings,
                     ).values_list("pk", flat=True)),
                 }

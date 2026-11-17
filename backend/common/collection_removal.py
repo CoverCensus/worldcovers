@@ -59,7 +59,7 @@ def remove_transferred_collection(
 
 def delete_contents(scope: dict[str, set[int]]) -> list[tuple[str, int]]:
     """Remove exclusive contents; retain shared records and all media files."""
-    markings, contributions = scope["markings"], scope["contributions"]
+    markings, submissions = scope["markings"], scope["submissions"]
     if catalog.Collection.objects.exclude(region_id__in=scope["regions"]).filter(
         region__post_office_regions__post_office__markings__pk__in=markings,
     ).exists():
@@ -68,15 +68,15 @@ def delete_contents(scope: dict[str, set[int]]) -> list[tuple[str, int]]:
                  .exclude(marking_id__in=markings).values_list("cover_id", flat=True))
     covers = scope["covers"] - shared
     # A different Collection may have unfinished work against a shared Cover.
-    for contribution in catalog.Contribution.objects.exclude(pk__in=contributions):
-        if contribution.marking_id in markings:
-            raise CommandError("Another Collection has a Contribution for a selected Marking.")
-        data = contribution.submitted_data or {}
+    for submission in catalog.Submission.objects.exclude(pk__in=submissions):
+        if submission.marking_id in markings:
+            raise CommandError("Another Collection has a Submission for a selected Marking.")
+        data = submission.submitted_data or {}
         if not isinstance(data, dict):
             continue
         for name, kind in JSON_REFS.items():
             if kind == "marking" and str(data.get(name, "")).isdigit() and int(data[name]) in markings:
-                raise CommandError("Another Collection has a Contribution for a selected Marking.")
+                raise CommandError("Another Collection has a Submission for a selected Marking.")
             if kind == "cover" and str(data.get(name, "")).isdigit() and int(data[name]) in covers:
                 covers.remove(int(data[name]))
                 shared.add(int(data[name]))
@@ -91,7 +91,7 @@ def delete_contents(scope: dict[str, set[int]]) -> list[tuple[str, int]]:
     offices -= set(catalog.PostOfficeRegion.objects.filter(post_office_id__in=offices)
                    .exclude(region_id__in=scope["regions"]).values_list("post_office_id", flat=True))
     transactions = catalog.SubmissionTransaction.objects.filter(
-        Q(marking_id__in=markings) | Q(contribution_id__in=contributions)
+        Q(marking_id__in=markings) | Q(submission_id__in=submissions)
         | Q(cover_id__in=covers),
     ).exclude(cover_id__in=shared)
     transactions = transactions.exclude(
@@ -99,7 +99,9 @@ def delete_contents(scope: dict[str, set[int]]) -> list[tuple[str, int]]:
     ).exclude(
         cover_versions__cover_id__in=catalog.Cover.all_objects.exclude(pk__in=covers).values("pk"),
     )
+    from common.collection_archive import source_items_for
     operations = [
+        ("catalog_source_items", source_items_for(offices, markings, covers, submissions)),
         ("images", images), ("citations", catalog.Citation.objects.filter(subject)),
         ("dates_seen", catalog.DateSeen.objects.filter(subject)),
         ("cover_valuations", catalog.CoverValuation.objects.filter(cover_id__in=covers)),
@@ -107,8 +109,8 @@ def delete_contents(scope: dict[str, set[int]]) -> list[tuple[str, int]]:
         ("marking_versions", catalog.MarkingVersion.objects.filter(marking_id__in=markings)),
         ("cover_versions", catalog.CoverVersion.objects.filter(cover_id__in=covers)),
         ("submission_transactions", transactions),
-        ("contribution_recycle_bin", catalog.ContributionRecycleBin.objects.filter(contribution_id__in=contributions)),
-        ("contributions", catalog.Contribution.objects.filter(pk__in=contributions)),
+        ("submission_recycle_bin", catalog.SubmissionRecycleBin.objects.filter(submission_id__in=submissions)),
+        ("submissions", catalog.Submission.objects.filter(pk__in=submissions)),
         ("marking_recycle_bin", catalog.MarkingRecycleBin.objects.filter(marking_id__in=markings)),
         ("cover_recycle_bin", catalog.CoverRecycleBin.objects.filter(cover_id__in=covers)),
         ("covers", catalog.Cover.all_objects.filter(pk__in=covers)),

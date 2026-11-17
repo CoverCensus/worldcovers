@@ -1,7 +1,7 @@
 """Archive what a recycle-bin purge removes, and verify it before erasure.
 
 Trello T51. A purge hard-deletes binned Markings and Covers. The ORM then
-cascades to approved Contributions (and their archive sidecars), version
+cascades to approved Submissions (and their archive sidecars), version
 snapshots, valuations and cover links, and sets to NULL the foreign keys that
 SubmissionTransaction rows and crop Images hold on the deleted rows. This
 module writes every such row as a Django JSON fixture, copies the image bytes
@@ -84,13 +84,13 @@ def collect_scope(marking_ids, cover_ids) -> list[ScopeEntry]:
          catalog.MarkingRecycleBin.objects.filter(marking_id__in=marking_ids)),
         ("common.coverrecyclebin", DELETED,
          catalog.CoverRecycleBin.objects.filter(cover_id__in=cover_ids)),
-        # Contribution's only catalog foreign key is its Marking; a Cover
+        # Submission's only catalog foreign key is its Marking; a Cover
         # submission names its Cover inside submitted_data, which no delete
-        # follows, so cover_ids add no Contribution rows here.
-        ("common.contribution", DELETED,
-         catalog.Contribution.objects.filter(marking_id__in=marking_ids)),
-        ("common.contributionrecyclebin", DELETED,
-         catalog.ContributionRecycleBin.objects.filter(contribution__marking_id__in=marking_ids)),
+        # follows, so cover_ids add no Submission rows here.
+        ("common.submission", DELETED,
+         catalog.Submission.objects.filter(marking_id__in=marking_ids)),
+        ("common.submissionrecyclebin", DELETED,
+         catalog.SubmissionRecycleBin.objects.filter(submission__marking_id__in=marking_ids)),
         ("common.covermarking", DELETED, catalog.CoverMarking.objects.filter(links)),
         ("common.markingversion", DELETED,
          catalog.MarkingVersion.objects.filter(marking_id__in=marking_ids)),
@@ -103,7 +103,7 @@ def collect_scope(marking_ids, cover_ids) -> list[ScopeEntry]:
         ("common.citation", DELETED, catalog.Citation.objects.filter(subject)),
         ("common.submissiontransaction", RELINKED,
          catalog.SubmissionTransaction.objects.filter(
-             links | Q(contribution__marking_id__in=marking_ids))),
+             links | Q(submission__marking_id__in=marking_ids))),
         ("common.image", RELINKED,
          catalog.Image.objects.filter(cropped_from__in=images).exclude(pk__in=images)),
     ]

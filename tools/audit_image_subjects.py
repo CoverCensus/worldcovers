@@ -58,7 +58,7 @@ V1_COVER_VIEWS = {"front", "back"}
 V1_MARKING_VIEWS = {"details"}
 
 # Legacy filenames look like 'Marking-<rawStateDataId>-<townmarkImageId>.jpg';
-# the contribution flow stores '<uuid4hex>.<ext>'. Distinguishes an inherited
+# the submission flow stores '<uuid4hex>.<ext>'. Distinguishes an inherited
 # defect from live user error.
 V1_FILENAME_RE = re.compile(r"^Marking-\d+-\d+\.", re.IGNORECASE)
 

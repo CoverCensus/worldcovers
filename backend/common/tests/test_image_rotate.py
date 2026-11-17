@@ -107,7 +107,7 @@ class ImageRotateTests(TestCase):
         self.admin = User.objects.create_superuser("admin", password="pw")
         self.editor = User.objects.create_user("va-editor", password="pw")
         editors = Group.objects.create(name="Editors")
-        editors.permissions.add(Permission.objects.get(codename="review_contribution"))
+        editors.permissions.add(Permission.objects.get(codename="review_submission"))
         self.editor.groups.add(editors)
 
         audit = {"created_by": self.admin, "modified_by": self.admin}

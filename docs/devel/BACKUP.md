@@ -47,7 +47,7 @@ recovery re-clone would take the backups with it.
 
 ```sh
 # check health without logging in
-ssh reese@<host> 'cat /var/backups/woco/STATUS.json'
+ssh <your-user>@<host> 'cat /var/backups/woco/STATUS.json'
 
 # on-demand snapshot before doing something destructive (no password needed)
 sudo -u wocod /usr/local/sbin/worldcovers-backup --tag pre-something
@@ -170,7 +170,7 @@ tagged snapshot first and **refuse to run without one**
 
 ## Gotchas
 
-- **`sudo -u wocod` inherits the caller's working directory.** From `/home/reese`
+- **`sudo -u wocod` inherits the caller's working directory.** From `/home/<your-user>`
   (0750), `wocod` cannot read it and GNU `find` aborts *after* doing its work.
   Both scripts `cd /` at startup. The systemd unit was never affected -- it sets
   `WorkingDirectory=`.

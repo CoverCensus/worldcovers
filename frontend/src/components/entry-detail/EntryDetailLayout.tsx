@@ -4,7 +4,11 @@ import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
 import { Button } from "@/components/ui/button";
 
-/** Two-column shell shared by marking and cover entry detail pages. */
+/**
+ * Two-column shell shared by marking and cover entry detail pages. The Back
+ * control is the large button size with a larger arrow (Trello T95: editors
+ * asked for a Back that is easier to see).
+ */
 export function EntryDetailLayout({
   onBack,
   backLabel = "Back",
@@ -28,8 +32,8 @@ export function EntryDetailLayout({
         <div className="max-w-7xl mx-auto px-4 pb-8 pt-3 sm:px-6 lg:px-8">
           <div className="mb-6 flex items-start justify-between gap-4">
             <div className="flex flex-col items-start gap-1">
-              <Button variant="ghost" onClick={onBack} className="-ml-4">
-                <ArrowLeft className="mr-2 h-4 w-4" />
+              <Button variant="ghost" size="lg" onClick={onBack} className="-ml-4 px-4 text-base [&_svg]:size-5">
+                <ArrowLeft aria-hidden="true" />
                 {backLabel}
               </Button>
               {title && (

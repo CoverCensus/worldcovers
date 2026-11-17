@@ -5,7 +5,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import Contribute from "./Contribute";
-import { createContribution, getContribution } from "@/services/contributions";
+import { createSubmission, getSubmission } from "@/services/submissions";
 import { getMarkingByIdRaw } from "@/services/markings";
 import { getCountyRegions } from "@/services/regions";
 
@@ -28,9 +28,9 @@ jest.mock("@/services/regions", () => ({
 }));
 jest.mock("@/services/letterings", () => ({ getLetterings: jest.fn().mockResolvedValue([]) }));
 jest.mock("@/constants/markingEnums", () => ({ getDateFormats: jest.fn().mockResolvedValue([]) }));
-jest.mock("@/services/contributions", () => ({
-  getContribution: jest.fn(), createContribution: jest.fn(),
-  listContributions: jest.fn().mockResolvedValue({ items: [] }),
+jest.mock("@/services/submissions", () => ({
+  getSubmission: jest.fn(), createSubmission: jest.fn(),
+  listSubmissions: jest.fn().mockResolvedValue({ items: [] }),
 }));
 jest.mock("@/services/referenceWorks", () => ({
   ...jest.requireActual("@/services/referenceWorks"), getReferenceWorks: jest.fn().mockResolvedValue([]),
@@ -55,7 +55,7 @@ beforeAll(() => {
 });
 beforeEach(() => {
   jest.clearAllMocks();
-  (createContribution as jest.Mock).mockResolvedValue({ id: 1 });
+  (createSubmission as jest.Mock).mockResolvedValue({ id: 1 });
 });
 
 function open(path: string, route: string) {
@@ -67,7 +67,7 @@ function open(path: string, route: string) {
 
 it("resumes a draft's county by the state's id and sends id and name with the draft", async () => {
   // The draft stores the abbreviation; the options carry the name, id and abbreviation.
-  (getContribution as jest.Mock).mockResolvedValue({
+  (getSubmission as jest.Mock).mockResolvedValue({
     id: 1, status: "draft", submittedData: { state: "VA", town: "Onancock", county_id: 9, submission_kind: "marking" },
   });
   open("/contribute?edit=1", "/contribute");
@@ -75,8 +75,8 @@ it("resumes a draft's county by the state's id and sends id and name with the dr
   await screen.findByText("Accomack");
 
   fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
-  await waitFor(() => expect(createContribution).toHaveBeenCalled());
-  const payload = (createContribution as jest.Mock).mock.calls[0][0];
+  await waitFor(() => expect(createSubmission).toHaveBeenCalled());
+  const payload = (createSubmission as jest.Mock).mock.calls[0][0];
   const get = (key: string) => (payload instanceof FormData ? payload.get(key) : payload[key]);
   expect(String(get("county_id"))).toBe("9");
   expect(String(get("county"))).toBe("Accomack");
@@ -106,7 +106,7 @@ it("keeps the County selector and the typed county off until a state is chosen",
 });
 
 it("changing the state empties the picked county and sends both county keys empty", async () => {
-  (getContribution as jest.Mock).mockResolvedValue({
+  (getSubmission as jest.Mock).mockResolvedValue({
     id: 1, status: "draft", submittedData: { state: "VA", town: "Onancock", county_id: 9, county: "Accomack", submission_kind: "marking" },
   });
   open("/contribute?edit=1", "/contribute");
@@ -119,8 +119,8 @@ it("changing the state empties the picked county and sends both county keys empt
   expect(screen.queryByText("Accomack")).toBeNull();
 
   fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
-  await waitFor(() => expect(createContribution).toHaveBeenCalled());
-  const payload = (createContribution as jest.Mock).mock.calls[0][0];
+  await waitFor(() => expect(createSubmission).toHaveBeenCalled());
+  const payload = (createSubmission as jest.Mock).mock.calls[0][0];
   const get = (key: string) => (payload instanceof FormData ? payload.get(key) : payload[key]);
   expect(String(get("state"))).toBe("Maryland");
   expect(String(get("county_id"))).toBe("");
@@ -129,15 +129,15 @@ it("changing the state empties the picked county and sends both county keys empt
 });
 
 it("sends a typed county that is not in the list, with no county id", async () => {
-  (getContribution as jest.Mock).mockResolvedValue({
+  (getSubmission as jest.Mock).mockResolvedValue({
     id: 1, status: "draft", submittedData: { state: "VA", town: "Suffolk", submission_kind: "marking" },
   });
   open("/contribute?edit=1", "/contribute");
   await waitFor(() => expect(getCountyRegions).toHaveBeenCalledWith(5));
   fireEvent.change(screen.getByLabelText("County not listed"), { target: { value: "Nansemond" } });
   fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
-  await waitFor(() => expect(createContribution).toHaveBeenCalled());
-  const payload = (createContribution as jest.Mock).mock.calls[0][0];
+  await waitFor(() => expect(createSubmission).toHaveBeenCalled());
+  const payload = (createSubmission as jest.Mock).mock.calls[0][0];
   const get = (key: string) => (payload instanceof FormData ? payload.get(key) : payload[key]);
   expect(String(get("county_proposed"))).toBe("Nansemond");
   expect(String(get("county_id"))).toBe("");

@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import Contribute from "./Contribute";
 import CoverEdit from "./CoverEdit";
-import { createContribution, getContribution } from "@/services/contributions";
+import { createSubmission, getSubmission } from "@/services/submissions";
 import { getReferenceWorks } from "@/services/referenceWorks";
 import { getMarkingByIdRaw } from "@/services/markings";
 import { listCitationsForSubject } from "@/services/citations";
@@ -22,9 +22,9 @@ jest.mock("@/services/postOffices", () => ({ getPostOffices: jest.fn().mockResol
 jest.mock("@/services/regions", () => ({ getRegions: jest.fn().mockResolvedValue([{ value: "VA", label: "Virginia" }]) }));
 jest.mock("@/services/letterings", () => ({ getLetterings: jest.fn().mockResolvedValue([]) }));
 jest.mock("@/constants/markingEnums", () => ({ getDateFormats: jest.fn().mockResolvedValue([]) }));
-jest.mock("@/services/contributions", () => ({
-  getContribution: jest.fn(), createContribution: jest.fn(),
-  listContributions: jest.fn().mockResolvedValue({ items: [] }),
+jest.mock("@/services/submissions", () => ({
+  getSubmission: jest.fn(), createSubmission: jest.fn(),
+  listSubmissions: jest.fn().mockResolvedValue({ items: [] }),
 }));
 jest.mock("@/services/referenceWorks", () => ({
   ...jest.requireActual("@/services/referenceWorks"), getReferenceWorks: jest.fn(),
@@ -52,7 +52,7 @@ beforeAll(() => {
 beforeEach(() => {
   jest.clearAllMocks();
   (getReferenceWorks as jest.Mock).mockResolvedValue(refs);
-  (createContribution as jest.Mock).mockResolvedValue({ id: 1 });
+  (createSubmission as jest.Mock).mockResolvedValue({ id: 1 });
 });
 
 function open(path: string, route: string, page: React.ReactNode) {
@@ -64,7 +64,7 @@ function open(path: string, route: string, page: React.ReactNode) {
 }
 
 it.each(["Marking", "Cover"])("resumes and saves both %s Citation selections and details", async (kind) => {
-  (getContribution as jest.Mock).mockResolvedValue({ id: 1, status: "draft", submittedData: {
+  (getSubmission as jest.Mock).mockResolvedValue({ id: 1, status: "draft", submittedData: {
     state: "VA", type: kind === "Cover" ? "FC" : "TOWNMARK",
     submission_kind: kind === "Cover" ? "cover" : "marking",
     parent_marking_id: 7, reference_work_ids: [11, 22], reference_work_details: details,
@@ -77,8 +77,8 @@ it.each(["Marking", "Cover"])("resumes and saves both %s Citation selections and
   expect(await screen.findByDisplayValue("https://example.com/11", {}, { timeout: 5000 })).toBeTruthy();
   expect(screen.getByDisplayValue("https://example.com/22")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
-  await waitFor(() => expect(createContribution).toHaveBeenCalled());
-  const payload = (createContribution as jest.Mock).mock.calls[0][0];
+  await waitFor(() => expect(createSubmission).toHaveBeenCalled());
+  const payload = (createSubmission as jest.Mock).mock.calls[0][0];
   if (payload instanceof FormData) {
     expect(payload.getAll("reference_work_ids[]")).toEqual(["11", "22"]);
     expect(JSON.parse(String(payload.get("reference_work_details")))).toEqual(details);
@@ -97,8 +97,8 @@ it("preloads existing Marking Citations before saving an edit", async () => {
   expect(await screen.findByDisplayValue("https://example.com/11")).toBeTruthy();
   expect(screen.getByDisplayValue("https://example.com/22")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
-  await waitFor(() => expect(createContribution).toHaveBeenCalled());
-  const payload = (createContribution as jest.Mock).mock.calls[0][0] as FormData;
+  await waitFor(() => expect(createSubmission).toHaveBeenCalled());
+  const payload = (createSubmission as jest.Mock).mock.calls[0][0] as FormData;
   expect(payload.getAll("reference_work_ids[]")).toEqual(["11", "22"]);
   expect(JSON.parse(String(payload.get("reference_work_details")))).toEqual(details);
 });
@@ -111,5 +111,5 @@ it("blocks a Cover edit when existing Citations cannot be loaded", async () => {
   expect(mockToast).toHaveBeenCalledWith(expect.objectContaining({
     description: "Could not load Citations. Reload before saving.",
   }));
-  expect(createContribution).not.toHaveBeenCalled();
+  expect(createSubmission).not.toHaveBeenCalled();
 });

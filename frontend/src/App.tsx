@@ -2,13 +2,14 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
-import { lazy, Suspense, useEffect, type ReactNode } from "react";
+import { BrowserRouter, Navigate, Routes, Route, useLocation, useParams } from "react-router-dom";
+import { lazy, Suspense } from "react";
+import { ScrollToTop } from "@/components/ScrollToTop";
 import { RequireAuth } from "@/components/RequireAuth";
 import { Spinner } from "@/components/ui/spinner";
 import Index from "./pages/Index";
 import Search from "./pages/Search";
-import ContributionDetail from "./pages/ContributionDetail";
+import SubmissionDetail from "./pages/SubmissionDetail";
 import Contribute from "./pages/Contribute";
 import Auth from "./pages/Auth";
 import ResetPassword from "./pages/ResetPassword";
@@ -31,14 +32,16 @@ const PostOfficeDetail = lazy(() => import("./pages/PostOfficeDetail"));
 const ReferenceWorks = lazy(() => import("./pages/ReferenceWorks"));
 
 const queryClient = new QueryClient();
-// Scroll to top on every route change so pages open at the top.
-const ScrollToTop = ({ children }: { children: ReactNode }) => {
+// Redirects the pre-rename Submission URL to the current one.
+// Example: /contribution/42?tab=review -> /submission/42?tab=review
+// Decision: keep this route until no stored link (email, Trello card,
+// bookmark) can still point at /contribution/:id.
+function LegacySubmissionRedirect() {
+  const { id } = useParams();
   const location = useLocation();
-  useEffect(() => {
-    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-  }, [location.pathname, location.search]);
-  return <>{children}</>;
-};
+  return <Navigate to={`/submission/${id}${location.search}${location.hash}`} replace />;
+}
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
@@ -69,11 +72,13 @@ const App = () => (
                 </RequireAuth>
               )}
             />
+            {/* Legacy path: links sent before the rename used /contribution/:id. */}
+            <Route path="/contribution/:id" element={<LegacySubmissionRedirect />} />
             <Route
-              path="/contribution/:id"
+              path="/submission/:id"
               element={(
                 <RequireAuth>
-                  <ContributionDetail />
+                  <SubmissionDetail />
                 </RequireAuth>
               )}
             />

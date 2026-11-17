@@ -16,7 +16,7 @@ from common import models
 
 MODEL_NAMES = (
     "Color", "Marking", "Cover", "MarkingVersion", "CoverVersion",
-    "Contribution", "Image", "Citation", "DateSeen", "CoverMarking",
+    "Submission", "Image", "Citation", "DateSeen", "CoverMarking",
     "MarkingRecycleBin", "CoverRecycleBin",
 )
 
@@ -69,7 +69,7 @@ def check(phase, mapping_path, state_path, actor_id=1):
                     for pk, (_, target_pk, _) in changes.items():
                         if snap.get("color_id") in (pk, str(pk)):
                             snap["color_id"] = target_pk
-                elif name == "Contribution":
+                elif name == "Submission":
                     data = row["submitted_data"]
                     for pk, (source, target_pk, target_name) in changes.items():
                         by_name = str(data.get("color", "")).casefold() == source.casefold()

@@ -7,7 +7,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import SimpleTestCase
 from PIL import Image, ImageCms, ImageOps, PngImagePlugin
 
-from common.api.v2.views import _save_contribution_image
+from common.api.v2.views import _save_submission_image
 from common.images import crop_image_bytes, extract_image_metadata, normalize_image_upload
 
 
@@ -102,10 +102,10 @@ class ImageUploadNormalizationTests(SimpleTestCase):
         with self.assertRaises(ValueError):
             normalize_image_upload(output.getvalue(), "image/png")
 
-    def test_contribution_upload_stores_png_and_recomputes_metadata(self):
+    def test_submission_upload_stores_png_and_recomputes_metadata(self):
         upload = SimpleUploadedFile("scan.jpg", self._jpeg(), content_type="image/jpeg")
         with tempfile.TemporaryDirectory() as media, self.settings(MEDIA_ROOT=media):
-            metadata = _save_contribution_image(upload, "WV")
+            metadata = _save_submission_image(upload, "WV")
             self.assertEqual(metadata["original_filename"], "scan.jpg")
             self.assertTrue(metadata["storage_filename"].endswith(".png"))
             content = (Path(media) / metadata["storage_filename"]).read_bytes()
@@ -114,8 +114,8 @@ class ImageUploadNormalizationTests(SimpleTestCase):
             self.assertEqual(metadata["file_size_bytes"], len(content))
             self.assertEqual(metadata["file_checksum"], hashlib.sha256(content).hexdigest())
 
-    def test_invalid_contribution_upload_writes_nothing(self):
+    def test_invalid_submission_upload_writes_nothing(self):
         upload = SimpleUploadedFile("scan.jpg", b"broken", content_type="image/jpeg")
         with tempfile.TemporaryDirectory() as media, self.settings(MEDIA_ROOT=media):
-            self.assertIsNone(_save_contribution_image(upload, "WV"))
+            self.assertIsNone(_save_submission_image(upload, "WV"))
             self.assertEqual(list(Path(media).rglob("*")), [])

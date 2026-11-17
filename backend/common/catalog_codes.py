@@ -7,7 +7,7 @@ from django.db.models import BigIntegerField, Max, Model, TextField, Value
 from django.db.models.fields.json import KeyTextTransform
 from django.db.models.functions import Cast, Coalesce, NullIf, Substr, Trim
 
-from common.models import Citation, Contribution, Cover, Marking, ReferenceWork, Region
+from common.models import Citation, Submission, Cover, Marking, ReferenceWork, Region
 
 
 DEFAULT_REFERENCE_CODE = "APMC"
@@ -86,8 +86,8 @@ def validate_unique_catalog_code(
     return normalized
 
 
-def suggest_for_contribution(
-    contrib: Contribution,
+def suggest_for_submission(
+    contrib: Submission,
     *,
     force: bool = False,
 ) -> CatalogCodeSuggestion:
@@ -96,7 +96,7 @@ def suggest_for_contribution(
     if existing and not force:
         return _suggestion_from_existing(contrib, existing)
 
-    suggestion = _build_contribution_suggestion(contrib, payload)
+    suggestion = _build_submission_suggestion(contrib, payload)
     payload["catalog_code"] = suggestion.catalog_code
     payload["catalog_code_source"] = suggestion.source
     payload["catalog_code_reference_code"] = suggestion.reference_code
@@ -106,8 +106,8 @@ def suggest_for_contribution(
     return suggestion
 
 
-def final_code_for_contribution(
-    contrib: Contribution,
+def final_code_for_submission(
+    contrib: Submission,
     *,
     requested_code: str | None,
 ) -> CatalogCodeSuggestion:
@@ -120,7 +120,7 @@ def final_code_for_contribution(
         suggestion = (
             _suggestion_from_existing(contrib, stored)
             if stored
-            else _build_contribution_suggestion(contrib, payload)
+            else _build_submission_suggestion(contrib, payload)
         )
     exclude_id = _existing_subject_id(contrib, suggestion.subject_type, payload)
     final_code = validate_unique_catalog_code(
@@ -175,8 +175,8 @@ def suggest_direct_catalog_code(payload: dict[str, Any]) -> CatalogCodeSuggestio
     )
 
 
-def _build_contribution_suggestion(
-    contrib: Contribution,
+def _build_submission_suggestion(
+    contrib: Submission,
     payload: dict[str, Any],
 ) -> CatalogCodeSuggestion:
     if _payload_is_cover(payload):
@@ -187,8 +187,8 @@ def _build_contribution_suggestion(
             reference_code=_reference_code_for_cover(parent_marking),
             region=_region_for_marking(parent_marking, subject_type="COVER"),
             exclude_id=_existing_subject_id(contrib, "COVER", payload),
-            source="contribution_cover",
-            exclude_contribution_id=contrib.pk,
+            source="submission_cover",
+            exclude_submission_id=contrib.pk,
         )
 
     region = _region_from_payload(payload)
@@ -198,8 +198,8 @@ def _build_contribution_suggestion(
         reference_code=_reference_code_from_selected_payload(payload),
         region=region,
         exclude_id=_existing_subject_id(contrib, "MARKING", payload),
-        source="contribution_marking",
-        exclude_contribution_id=contrib.pk,
+        source="submission_marking",
+        exclude_submission_id=contrib.pk,
     )
 
 
@@ -211,7 +211,7 @@ def _build_suggestion(
     region: Region,
     exclude_id: int | None,
     source: str,
-    exclude_contribution_id: int | None = None,
+    exclude_submission_id: int | None = None,
 ) -> CatalogCodeSuggestion:
     reference = normalize_catalog_code(reference_code) or DEFAULT_REFERENCE_CODE
     region_abbrev = normalize_catalog_code(region.abbrev).upper()
@@ -225,7 +225,7 @@ def _build_suggestion(
         subject_type=subject_type,
         prefix=prefix,
         exclude_id=exclude_id,
-        exclude_contribution_id=exclude_contribution_id,
+        exclude_submission_id=exclude_submission_id,
     )
     return CatalogCodeSuggestion(
         catalog_code="{}{:04d}".format(prefix, serial),
@@ -242,7 +242,7 @@ def _next_serial(
     subject_type: str,
     prefix: str,
     exclude_id: int | None,
-    exclude_contribution_id: int | None = None,
+    exclude_submission_id: int | None = None,
 ) -> int:
     model = _model_for_subject(subject_type)
     qs = model.all_objects.filter(code__startswith=prefix)
@@ -250,17 +250,17 @@ def _next_serial(
         qs = qs.exclude(pk=exclude_id)
     max_seen = _max_serial(qs, code_expr="code", prefix=prefix)
 
-    # Also check codes already suggested for other pending/draft contributions
+    # Also check codes already suggested for other pending/draft submissions
     # that have not yet been approved into the Marking/Cover table.
-    pending_qs = Contribution.objects.filter(
+    pending_qs = Submission.objects.filter(
         status__in=(
-            Contribution.STATUS_DRAFT,
-            Contribution.STATUS_PENDING,
-            Contribution.STATUS_NEEDS_REVISION,
+            Submission.STATUS_DRAFT,
+            Submission.STATUS_PENDING,
+            Submission.STATUS_NEEDS_REVISION,
         ),
     )
-    if exclude_contribution_id is not None:
-        pending_qs = pending_qs.exclude(pk=exclude_contribution_id)
+    if exclude_submission_id is not None:
+        pending_qs = pending_qs.exclude(pk=exclude_submission_id)
     pending_qs = pending_qs.annotate(_payload_code=_payload_code_expr())
     pending_qs = pending_qs.filter(_payload_code__startswith=prefix)
     max_seen = max(max_seen, _max_serial(pending_qs, code_expr="_payload_code", prefix=prefix))
@@ -289,7 +289,7 @@ def _max_serial(queryset, *, code_expr, prefix) -> int:
     """Largest numeric suffix in `queryset`, computed by the database.
 
     This used to be a Python loop over every prefixed row plus a json.loads of
-    every pending contribution -- so a single approval cost one JSON parse per
+    every pending submission -- so a single approval cost one JSON parse per
     queued row, and approving a queue of N rows was O(N^2). At the VPHC ingest's
     2,443 pending rows that is ~6M parses to drain the queue. Both halves are
     now one aggregate each.
@@ -318,7 +318,7 @@ def _max_serial(queryset, *, code_expr, prefix) -> int:
 
 
 def _suggestion_from_existing(
-    contrib: Contribution,
+    contrib: Submission,
     code: str,
 ) -> CatalogCodeSuggestion:
     payload = dict(contrib.submitted_data or {})
@@ -370,7 +370,7 @@ def _payload_is_cover(payload: dict[str, Any]) -> bool:
 
 
 def _existing_subject_id(
-    contrib: Contribution,
+    contrib: Submission,
     subject_type: str,
     payload: dict[str, Any],
 ) -> int | None:

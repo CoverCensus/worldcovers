@@ -72,7 +72,7 @@ class DateRangeSignalTests(DateRangeCacheBase):
         # work, date_year/month/day are authoritative and `date` is derived from
         # them (DateSeen.generated_date_for_parts), so assigning `date` on a row
         # that already has components set is ignored and then trips the
-        # granularity cross-check. This mirrors contribution_apply, which keys
+        # granularity cross-check. This mirrors submission_apply, which keys
         # every DateSeen write on the components.
         row.date_year, row.date_month, row.date_day = 1848, 6, None
         row.granularity = "MONTH"
