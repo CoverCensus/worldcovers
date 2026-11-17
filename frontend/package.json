@@ -124,6 +124,7 @@
     "glob": "^13.0.0",
     "jsdom": "^29.1.1",
     "postcss-selector-parser": "^7.1.6",
-    "argparse": "^2.0.1"
+    "argparse": "^2.0.1",
+    "minimatch@^10": "^11.0.1"
   }
 }
