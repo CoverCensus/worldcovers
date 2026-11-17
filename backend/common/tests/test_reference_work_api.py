@@ -50,8 +50,12 @@ class ReferenceWorkApiTests(TestCase):
             "edition": "2",
         }
 
-    def test_anonymous_cannot_read_or_write(self):
-        self.assertIn(self.client.get("/api/v2/reference-works/").status_code, (401, 403))
+    def test_anonymous_can_read_but_not_write(self):
+        # Public reads: the signed-out cover page loads this list.
+        self.assertEqual(self.client.get("/api/v2/reference-works/").status_code, 200)
+        self.assertEqual(
+            self.client.get(f"/api/v2/reference-works/{self.ascc.pk}/").status_code, 200,
+        )
         self.assertIn(
             self.client.post("/api/v2/reference-works/", self.payload, format="json").status_code,
             (401, 403),

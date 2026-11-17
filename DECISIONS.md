@@ -320,7 +320,9 @@ database because the polymorphic subject link is not a foreign key
 **Do:** Let Editors and Administrators add and edit Reference Works on the
 Reference Works page, and make the API's write rule the project's Editor
 definition (a Collection assignment, the review permission, or superuser),
-the same rule the Color, Shape and Lettering endpoints use. Trim text, store
+the same rule the Color, Shape and Lettering endpoints use. Let anyone,
+signed in or not, read Reference Works: they are public bibliography, and the
+signed-out cover page loads the list. Trim text, store
 a blank code as NULL, refuse a title and edition that already exist, bound
 the year, and refuse a change to a code that existing Citations rely on,
 because catalog codes are generated from it. Show a Reference Work on the

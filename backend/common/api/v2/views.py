@@ -686,7 +686,7 @@ class ShapeViewSet(viewsets.ModelViewSet):
 
 
 class ReferenceWorkViewSet(viewsets.ModelViewSet):
-    """Reads: any authenticated user. Writes: Editors / Administrators."""
+    """Reads: anyone, signed in or not. Writes: Editors / Administrators."""
     queryset = ReferenceWork.objects.all()
     serializer_class = ReferenceWorkSerializer
     permission_classes = [CanManageReferenceWorks]
