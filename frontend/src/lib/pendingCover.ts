@@ -33,4 +33,8 @@ export interface PendingCoverErrors {
 export interface PendingCoverSavedImage {
   key: string;
   url: string;
+  /** Caption as edited on this form (T43 parity with the Cover form). */
+  description: string;
+  /** Caption as stored on the draft; only a changed caption is sent. */
+  savedDescription: string;
 }

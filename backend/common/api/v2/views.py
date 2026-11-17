@@ -4193,6 +4193,11 @@ _PENDING_COVER_TRANSPORT_KEYS = (
     "drop_pending_cover",
     "pending_cover_removed_image_keys",
     "pending_cover_image",
+    # Captions for the cover images (T43 parity with the Cover form):
+    # positional over this request's pending_cover_image files, and a
+    # {displayed URL: caption} map for images already saved with the draft.
+    "pending_cover_image_descriptions",
+    "pending_cover_existing_image_descriptions",
 )
 
 
@@ -4277,6 +4282,25 @@ def _pending_cover_request_error(data, request):
     return None
 
 
+def _pending_cover_caption_error(data):
+    """Refuse an overlong pending-cover caption. The submit view calls this in
+    its caption checks, before the Marking's own uploads are written, so a
+    refused caption leaves no orphan files (unlike the bounds above, which run
+    after the Marking files are saved)."""
+    for number, text in enumerate(
+        _parse_image_descriptions(data.get("pending_cover_image_descriptions")), start=1
+    ):
+        if len(text) > MAX_IMAGE_DESCRIPTION_LENGTH:
+            return (
+                f"Caption for cover image {number} is longer than "
+                f"{MAX_IMAGE_DESCRIPTION_LENGTH} characters."
+            )
+    saved = _parse_saved_image_descriptions(data.get("pending_cover_existing_image_descriptions"))
+    if any(len(text) > MAX_IMAGE_DESCRIPTION_LENGTH for text in saved.values()):
+        return f"A cover image caption is longer than {MAX_IMAGE_DESCRIPTION_LENGTH} characters."
+    return None
+
+
 def _resolve_pending_cover(data, existing):
     """Merge the request's pending-cover fields over what the row already holds.
 
@@ -4304,6 +4328,28 @@ def _resolve_pending_cover(data, existing):
     }
     if removed:
         kept = [m for m in kept if str(m.get("storage_filename", "")).lstrip("/") not in removed]
+    # Changed captions of saved cover images, keyed like the removals and
+    # matched exactly. An empty caption clears it. Metas are copied so the
+    # row's stored dicts are not mutated in place.
+    recaptioned = {
+        key.split("/media/", 1)[-1].lstrip("/"): text
+        for key, text in _parse_saved_image_descriptions(
+            data.get("pending_cover_existing_image_descriptions")
+        ).items()
+        if isinstance(key, str) and key.strip()
+    }
+    if recaptioned:
+        updated = []
+        for meta in kept:
+            sfn = str(meta.get("storage_filename", "")).lstrip("/")
+            if sfn in recaptioned:
+                meta = dict(meta)
+                if recaptioned[sfn]:
+                    meta["image_description"] = recaptioned[sfn]
+                else:
+                    meta.pop("image_description", None)
+            updated.append(meta)
+        kept = updated
     merged["image_metas"] = kept
     return merged
 
@@ -4315,15 +4361,24 @@ def _pending_cover_uploads(request):
         return []
 
 
-def _save_pending_cover_uploads(pending_cover, uploads, region_abbrev):
+def _save_pending_cover_uploads(pending_cover, uploads, region_abbrev, descriptions=()):
     """Write this request's cover uploads and append their metas. Called only
-    after the field checks passed, so a refused request leaves no new files."""
+    after the field checks passed, so a refused request leaves no new files.
+
+    `descriptions` is the parsed pending_cover_image_descriptions list,
+    positional over `uploads` (e.g. ["Front", "", "Back"]); a non-empty entry
+    becomes that upload's meta["image_description"], which approval of the
+    child cover submission copies onto Image.image_description."""
     if pending_cover is None or not uploads:
         return pending_cover
     kept = list(pending_cover.get("image_metas") or [])
-    for uploaded in uploads:
+    for index, uploaded in enumerate(uploads):
         meta = _save_submission_image(uploaded, region_abbrev)
         if meta:
+            # Index over the uploads, not the saved metas, so a failed save
+            # cannot shift later captions onto the wrong image.
+            if index < len(descriptions) and descriptions[index]:
+                meta["image_description"] = descriptions[index]
             kept.append(meta)
     pending_cover["image_metas"] = kept[:PENDING_COVER_MAX_IMAGES]
     return pending_cover
@@ -4567,6 +4622,10 @@ class SubmissionSubmitView(APIView):
                 {"detail": f"A caption is longer than {MAX_IMAGE_DESCRIPTION_LENGTH} characters."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        # Captions for a Cover submitted with a new Marking (T37), same cap.
+        pending_cover_caption_error = _pending_cover_caption_error(data)
+        if pending_cover_caption_error:
+            return Response({"detail": pending_cover_caption_error}, status=status.HTTP_400_BAD_REQUEST)
 
         # Save uploaded image files under MEDIA_ROOT/<region_abbrev>/.
         # Marking flow uses `marking_image`; cover draft flow uses `cover_image`.
@@ -4811,7 +4870,12 @@ class SubmissionSubmitView(APIView):
                     cover_error = _validate_pending_cover(pending_cover, len(cover_uploads))
                     if cover_error:
                         return Response({"detail": cover_error}, status=status.HTTP_400_BAD_REQUEST)
-                pending_cover = _save_pending_cover_uploads(pending_cover, cover_uploads, region_abbrev)
+                pending_cover = _save_pending_cover_uploads(
+                    pending_cover,
+                    cover_uploads,
+                    region_abbrev,
+                    _parse_image_descriptions(data.get("pending_cover_image_descriptions")),
+                )
                 if pending_cover is None:
                     existing_sd.pop("pending_cover", None)
                 else:
@@ -4902,7 +4966,12 @@ class SubmissionSubmitView(APIView):
                 cover_error = _validate_pending_cover(pending_cover, len(cover_uploads))
                 if cover_error:
                     return Response({"detail": cover_error}, status=status.HTTP_400_BAD_REQUEST)
-            pending_cover = _save_pending_cover_uploads(pending_cover, cover_uploads, region_abbrev)
+            pending_cover = _save_pending_cover_uploads(
+                pending_cover,
+                cover_uploads,
+                region_abbrev,
+                _parse_image_descriptions(data.get("pending_cover_image_descriptions")),
+            )
             if pending_cover is not None:
                 submitted_data["pending_cover"] = pending_cover
 

@@ -16,6 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { FieldHelp } from "@/components/FieldHelp";
+import { ImageCaptionInput } from "@/components/ImageCaptionInput";
 import { PartialDateFields } from "@/components/PartialDateFields";
 import { COVER_TYPE_OPTIONS } from "@/lib/coverTypes";
 import { COVER_DATE_HELP, COVER_TYPE_HELP, PENDING_COVER_SECTION } from "@/labels/guidelines";
@@ -35,8 +36,12 @@ interface PendingCoverSectionProps {
   files: File[];
   onAddFiles: (files: File[]) => void;
   onRemoveFile: (index: number) => void;
+  /** Caption typed for a new upload, looked up by File identity. */
+  fileCaption: (file: File) => string;
+  onFileCaptionChange: (file: File, caption: string) => void;
   savedImages: PendingCoverSavedImage[];
   onRemoveSavedImage: (key: string) => void;
+  onSavedImageCaptionChange: (key: string, caption: string) => void;
   errors: PendingCoverErrors;
   disabled?: boolean;
   /** An upload on the form looks like a whole cover: draw the eye here. */
@@ -67,8 +72,11 @@ export function PendingCoverSection({
   files,
   onAddFiles,
   onRemoveFile,
+  fileCaption,
+  onFileCaptionChange,
   savedImages,
   onRemoveSavedImage,
+  onSavedImageCaptionChange,
   errors,
   disabled = false,
   highlight = false,
@@ -185,9 +193,14 @@ export function PendingCoverSection({
             <p className="text-sm text-muted-foreground">{PENDING_COVER_SECTION.imagesHelp}</p>
             {imageCount > 0 && (
               <ul className="grid grid-cols-2 sm:grid-cols-4 gap-3" aria-label="Cover images">
-                {savedImages.map((img) => (
+                {savedImages.map((img, index) => (
                   <li key={img.key} className="space-y-1">
                     <img src={img.url} alt="Saved cover image" className="h-20 w-full object-contain bg-muted rounded" />
+                    <ImageCaptionInput
+                      id={`pending-cover-saved-caption-${index}`}
+                      value={img.description}
+                      onChange={(value) => onSavedImageCaptionChange(img.key, value)}
+                    />
                     <Button
                       type="button"
                       variant="ghost"
@@ -203,6 +216,11 @@ export function PendingCoverSection({
                 {files.map((file, index) => (
                   <li key={`${file.name}-${index}`} className="space-y-1">
                     <FilePreview file={file} />
+                    <ImageCaptionInput
+                      id={`pending-cover-caption-${index}`}
+                      value={fileCaption(file)}
+                      onChange={(value) => onFileCaptionChange(file, value)}
+                    />
                     <Button
                       type="button"
                       variant="ghost"

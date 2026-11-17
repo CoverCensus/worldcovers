@@ -139,6 +139,30 @@ it("lets a resumed Marking draft change a saved image's caption and sends only t
   expect(sent).toEqual({ "/media/va/mine.png": "Front of the cover" });
 });
 
+// The Cover staged on a new-Marking form (T37) captions its images like the Cover form.
+it("sends captions for the Cover staged on a new Marking form", async () => {
+  const { container } = resumeDraft("marking", {
+    pending_cover: { type: "ENV", image_metas: [{ storage_filename: "va/cover.png", image_description: "Old" }] },
+  });
+  const saved = await screen.findByDisplayValue("Old", {}, { timeout: 5000 });
+  fireEvent.change(saved, { target: { value: "Back " } });
+  fireEvent.change(container.querySelector("#pending-cover-file-input") as HTMLInputElement, {
+    target: { files: [new File(["png"], "front.png", { type: "image/png" })] },
+  });
+  fireEvent.change(container.querySelector("#pending-cover-caption-0") as HTMLInputElement, {
+    target: { value: " Front" },
+  });
+
+  fireEvent.click(screen.getByRole("button", { name: /save as draft/i }));
+  await waitFor(() => expect(createSubmission).toHaveBeenCalled());
+  const payload = (createSubmission as jest.Mock).mock.calls[0][0] as FormData;
+  expect((payload.getAll("pending_cover_image") as File[]).map((f) => f.name)).toEqual(["front.png"]);
+  expect(JSON.parse(String(payload.get("pending_cover_image_descriptions")))).toEqual(["Front"]);
+  expect(JSON.parse(String(payload.get("pending_cover_existing_image_descriptions")))).toEqual({
+    "va/cover.png": "Back",
+  });
+});
+
 it("captions only the gallery images that have a description", () => {
   const image = { isDefault: false, isTracing: false, imageId: null };
   const { container } = render(<TooltipProvider><EntryImageGalleryCard

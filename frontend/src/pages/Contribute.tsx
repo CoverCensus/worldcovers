@@ -530,6 +530,10 @@ const Contribute = () => {
   const [pendingCoverOn, setPendingCoverOn] = useState(false);
   const [pendingCoverFields, setPendingCoverFields] = useState<PendingCoverFields>({ ...EMPTY_PENDING_COVER });
   const [pendingCoverFiles, setPendingCoverFiles] = useState<File[]>([]);
+  // Captions for pendingCoverFiles, keyed by File identity (the list already
+  // dedupes by identity). A removed file's entry is left behind and ignored:
+  // only files still in pendingCoverFiles are read at submit.
+  const [pendingCoverFileCaptions, setPendingCoverFileCaptions] = useState<Map<File, string>>(() => new Map());
   const [pendingCoverSavedImages, setPendingCoverSavedImages] = useState<PendingCoverSavedImage[]>([]);
   const [pendingCoverRemovedKeys, setPendingCoverRemovedKeys] = useState<string[]>([]);
   const [pendingCoverErrors, setPendingCoverErrors] = useState<PendingCoverErrors>({});
@@ -1002,11 +1006,20 @@ const Contribute = () => {
           });
           setPendingCoverSavedImages(
             pcMetas
-              .map((m) => String(m?.storage_filename ?? "").replace(/^\/+/, ""))
-              .filter((sf) => sf.length > 0)
-              .map((sf) => ({ key: sf, url: `${mediaBase}/${sf}` })),
+              .map((m) => ({
+                sf: String(m?.storage_filename ?? "").replace(/^\/+/, ""),
+                caption: String(m?.image_description ?? ""),
+              }))
+              .filter(({ sf }) => sf.length > 0)
+              .map(({ sf, caption }) => ({
+                key: sf,
+                url: `${mediaBase}/${sf}`,
+                description: caption,
+                savedDescription: caption,
+              })),
           );
           setPendingCoverFiles([]);
+          setPendingCoverFileCaptions(new Map());
           setPendingCoverRemovedKeys([]);
         } else {
           setPendingCoverOn(false);
@@ -1444,14 +1457,27 @@ const Contribute = () => {
   // cropped uploads and with any upload that looks like a whole cover, so the
   // scan the contributor already has becomes the Cover's image without a second
   // pick. Files already listed are not added twice.
+  // A seeded file also takes the Marking tile's caption as its starting
+  // caption, unless the contributor already typed one for it here.
   const enablePendingCover = () => {
     setPendingCoverOn(true);
+    const seeded: Array<[File, string]> = [];
+    for (const item of gallery) {
+      if (item.kind !== "new") continue;
+      const candidate = item.originalFile ?? (coverLikeImageKeys.includes(item.key) ? item.file : null);
+      if (candidate) seeded.push([candidate, item.description]);
+    }
     setPendingCoverFiles((prev) => {
       const next = [...prev];
-      for (const item of gallery) {
-        if (item.kind !== "new") continue;
-        const candidate = item.originalFile ?? (coverLikeImageKeys.includes(item.key) ? item.file : null);
-        if (candidate && !next.includes(candidate)) next.push(candidate);
+      for (const [file] of seeded) {
+        if (!next.includes(file)) next.push(file);
+      }
+      return next;
+    });
+    setPendingCoverFileCaptions((prev) => {
+      const next = new Map(prev);
+      for (const [file, caption] of seeded) {
+        if (caption.trim() && !next.get(file)?.trim()) next.set(file, caption);
       }
       return next;
     });
@@ -1494,6 +1520,11 @@ const Contribute = () => {
       form.append("marking_id", String(draftCoverTargetId));
       form.append("cover_image", file, file.name);
       form.append("cover_image_tags", JSON.stringify(["photograph"]));
+      // The tile's caption goes with the image, positional like the Cover
+      // form's: e.g. ["Front"]. Omitted when the tile has none.
+      if (item.description.trim()) {
+        form.append("cover_image_descriptions", JSON.stringify([item.description.trim()]));
+      }
       form.append("image_order", JSON.stringify(["__new__"]));
       const result = await createSubmission(form);
       setGallery((prev) => prev.filter((g) => g.key !== key));
@@ -2140,6 +2171,22 @@ const Contribute = () => {
           );
           for (const file of pendingCoverFiles) {
             form.append("pending_cover_image", file, file.name);
+          }
+          // Positional over the pending_cover_image files above, e.g.
+          // ["Front", "", "Back"]; omitted when no new cover image has a caption.
+          const coverCaptions = pendingCoverFiles.map((file) => (pendingCoverFileCaptions.get(file) ?? "").trim());
+          if (coverCaptions.some((c) => c.length > 0)) {
+            form.append("pending_cover_image_descriptions", JSON.stringify(coverCaptions));
+          }
+          // Changed captions of cover images saved with this draft, keyed by
+          // storage filename, e.g. {"ny/abc.jpg": "Back"}; "" clears one.
+          const changedCoverCaptions: Record<string, string> = {};
+          for (const img of pendingCoverSavedImages) {
+            const caption = img.description.trim();
+            if (caption !== img.savedDescription.trim()) changedCoverCaptions[img.key] = caption;
+          }
+          if (Object.keys(changedCoverCaptions).length > 0) {
+            form.append("pending_cover_existing_image_descriptions", JSON.stringify(changedCoverCaptions));
           }
           if (pendingCoverRemovedKeys.length > 0) {
             form.append("pending_cover_removed_image_keys", JSON.stringify(pendingCoverRemovedKeys));
@@ -3689,6 +3736,15 @@ const Contribute = () => {
                         files={pendingCoverFiles}
                         onAddFiles={(picked) => setPendingCoverFiles((prev) => [...prev, ...picked])}
                         onRemoveFile={(index) => setPendingCoverFiles((prev) => prev.filter((_, i) => i !== index))}
+                        fileCaption={(file) => pendingCoverFileCaptions.get(file) ?? ""}
+                        onFileCaptionChange={(file, caption) =>
+                          setPendingCoverFileCaptions((prev) => new Map(prev).set(file, caption))
+                        }
+                        onSavedImageCaptionChange={(key, caption) =>
+                          setPendingCoverSavedImages((prev) =>
+                            prev.map((img) => (img.key === key ? { ...img, description: caption } : img)),
+                          )
+                        }
                         savedImages={pendingCoverSavedImages}
                         onRemoveSavedImage={(key) => {
                           setPendingCoverSavedImages((prev) => prev.filter((img) => img.key !== key));
