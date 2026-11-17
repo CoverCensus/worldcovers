@@ -248,6 +248,64 @@ class PendingCoverTests(TestCase):
         # The marking keeps its own crop.
         self.assertEqual(Image.objects.filter(subject_type=Image.SUBJECT_MARKING, subject_id=marking_id).count(), 1)
 
+    # ------------------------------------------------------------ captions
+
+    def test_cover_image_captions_ride_the_metas_onto_the_approved_cover(self):
+        created = self._submit(
+            pending_cover=_cover(),
+            pending_cover_image=[_png("front.png"), _png("back.png")],
+            pending_cover_image_descriptions=json.dumps(["  Front  ", ""]),
+        )
+        self.assertEqual(created.status_code, 201, created.data)
+        sd = Submission.objects.get(pk=created.data["id"]).submitted_data
+        metas = sd["pending_cover"]["image_metas"]
+        self.assertEqual(metas[0]["image_description"], "Front")
+        self.assertNotIn("image_description", metas[1])
+        self.assertNotIn("pending_cover_image_descriptions", sd)
+
+        child_pk = self._approve(created.data["id"]).data["pendingCoverSubmissionId"]
+        cover_id = self._approve(child_pk).data["coverId"]
+        captions = {
+            i.storage_filename: i.image_description
+            for i in Image.objects.filter(subject_type=Image.SUBJECT_COVER, subject_id=cover_id)
+        }
+        self.assertEqual(captions[metas[0]["storage_filename"]], "Front")
+        self.assertFalse(captions[metas[1]["storage_filename"]])
+
+    def test_an_overlong_cover_caption_is_refused_before_any_file_is_written(self):
+        import os
+        before = sum(len(files) for _, _, files in os.walk(MEDIA_ROOT))
+        refused = self._submit(
+            pending_cover=_cover(),
+            pending_cover_image=[_png("c.png")],
+            pending_cover_image_descriptions=json.dumps(["x" * 501]),
+        )
+        self.assertEqual(refused.status_code, 400)
+        self.assertIn("Caption for cover image 1", refused.data["detail"])
+        self.assertEqual(Submission.objects.count(), 0)
+        self.assertEqual(sum(len(files) for _, _, files in os.walk(MEDIA_ROOT)), before)
+
+    def test_a_resumed_draft_recaptions_and_clears_its_saved_cover_images(self):
+        draft = self._submit(
+            save_as_draft="true", pending_cover=_cover(),
+            pending_cover_image=[_png("front.png"), _png("back.png")],
+            pending_cover_image_descriptions=json.dumps(["Old", "Back"]),
+        )
+        pk = draft.data["id"]
+        first, second = Submission.objects.get(pk=pk).submitted_data["pending_cover"]["image_metas"]
+
+        resubmitted = self._submit(
+            edit_submission_id=pk, save_as_draft="true", pending_cover=_cover(), marking_image=[],
+            pending_cover_existing_image_descriptions=json.dumps({
+                f"/media/{first['storage_filename']}": "New",
+                second["storage_filename"]: "",
+            }),
+        )
+        self.assertEqual(resubmitted.status_code, 200, resubmitted.data)
+        metas = Submission.objects.get(pk=pk).submitted_data["pending_cover"]["image_metas"]
+        self.assertEqual(metas[0]["image_description"], "New")
+        self.assertNotIn("image_description", metas[1])
+
     def test_bulk_approve_creates_the_child_too(self):
         created = self._submit(pending_cover=_cover(), pending_cover_image=[_png("whole-cover.png")])
         client = APIClient()

@@ -100,6 +100,7 @@ it("turns the upload into a Cover draft for the Marking and drops it from the ed
   await screen.findByRole("button", { name: /save as draft/i });
   await uploadWholeCover();
   expect(screen.getByText(/becomes a Cover draft you finish and submit separately/)).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Caption (optional)"), { target: { value: " Whole cover " } });
 
   fireEvent.click(screen.getByRole("button", { name: offer }));
   await waitFor(() => expect(createSubmission).toHaveBeenCalledTimes(1));
@@ -118,6 +119,8 @@ it("turns the upload into a Cover draft for the Marking and drops it from the ed
   expect(payload.get("marking_id")).toBe("7");
   expect(payload.getAll("cover_image").map((f) => (f as File).name)).toEqual(["whole-cover.png"]);
   expect(JSON.parse(String(payload.get("cover_image_tags")))).toEqual(["photograph"]);
+  // The tile's caption travels with the image into the Cover draft.
+  expect(JSON.parse(String(payload.get("cover_image_descriptions")))).toEqual(["Whole cover"]);
   expect(JSON.parse(String(payload.get("image_order")))).toEqual(["__new__"]);
 
   await waitFor(() => expect(screen.queryByAltText(/ image 1$/)).toBeNull());

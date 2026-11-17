@@ -250,6 +250,10 @@ export type SubmissionRequest = SubmittedData & {
   marking_image_descriptions?: string[];
   cover_image_descriptions?: string[];
   existing_image_descriptions?: Record<string, string>;
+  /** Captions positional over pending_cover_image files, e.g. ["Front", ""]. */
+  pending_cover_image_descriptions?: string[];
+  /** Changed captions of saved pending-cover images, e.g. {"ny/a.jpg": "Back"}. */
+  pending_cover_existing_image_descriptions?: Record<string, string>;
 };
 
 type UploadKey = "marking_image" | "cover_image" | "pending_cover_image";

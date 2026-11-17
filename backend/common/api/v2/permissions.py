@@ -392,7 +392,11 @@ class IsOwnDeletableSubmission(BasePermission):
 
 class CanManageReferenceWorks(BasePermission):
     """
-    Reads: anyone authenticated.
+    Reads (GET/HEAD/OPTIONS): anyone, signed in or not. Reference Works are
+    public bibliography that every Citation card and the public cover page
+    show; gating them made CoverDetail fail for signed-out visitors, because
+    it loads /reference-works/ alongside the cover and one 403 rejected the
+    whole page.
     Writes (POST/PUT/PATCH): Editors and Administrators by the project's Editor
     rule (a CollectionAssignment, the review permission, or superuser), the same
     rule the Color, Shape and Lettering endpoints use. Trello S19.
@@ -401,11 +405,11 @@ class CanManageReferenceWorks(BasePermission):
     """
 
     def has_permission(self, request, view):
+        if request.method in SAFE_METHODS:
+            return True
         user = request.user
         if not user or not user.is_authenticated:
             return False
-        if request.method in SAFE_METHODS:
-            return True
         if user.is_superuser:
             return True
         if request.method in ("POST", "PUT", "PATCH"):

@@ -320,7 +320,9 @@ database because the polymorphic subject link is not a foreign key
 **Do:** Let Editors and Administrators add and edit Reference Works on the
 Reference Works page, and make the API's write rule the project's Editor
 definition (a Collection assignment, the review permission, or superuser),
-the same rule the Color, Shape and Lettering endpoints use. Trim text, store
+the same rule the Color, Shape and Lettering endpoints use. Let anyone,
+signed in or not, read Reference Works: they are public bibliography, and the
+signed-out cover page loads the list. Trim text, store
 a blank code as NULL, refuse a title and edition that already exist, bound
 the year, and refuse a change to a code that existing Citations rely on,
 because catalog codes are generated from it. Show a Reference Work on the
@@ -860,6 +862,16 @@ onto `Image.image_description`. Show a caption as a `<figcaption>` under the
 main image on the Marking and Cover pages and both review pages; show a
 draft's saved caption read-only on its tile.
 
+The Cover staged on a new-Marking form (T37, `PendingCoverSection`) captions
+its images the same way: `pending_cover_image_descriptions` is positional over
+`pending_cover_image`, and `pending_cover_existing_image_descriptions`
+({storage filename or displayed URL: caption}, "" clears) recaptions images
+saved with the draft. Both land on `pending_cover.image_metas`, which the child
+cover submission carries to approval. Seeding the section from a Marking tile
+copies that tile's caption. The T92 "Cover draft" offer on a Marking edit sends
+the tile's caption as `cover_image_descriptions`. Pending-cover captions are
+checked with the other captions, before any file is written.
+
 **Don't:** Edit the caption of a catalog image through a Marking or Cover edit
 (Marking edits stay add-only; a Cover edit's kept rows keep their caption) --
 saved captions change through "Edit A Saved Image's Caption As An Audited
@@ -872,7 +884,8 @@ change, and drafts already keep metas as they are. Django does not enforce
 text should not repeat a caption. Changing the v1 view labels is a separate
 data decision.
 
-**Evidence:** `test_image_captions.py`, `ImageCaptions.test.tsx`.
+**Evidence:** `test_image_captions.py`, `test_pending_cover.py`, `ImageCaptions.test.tsx`,
+`Contribute.draftCover.test.tsx`.
 
 ## Compare An Edit Against The Current Entry Before Approval
 
