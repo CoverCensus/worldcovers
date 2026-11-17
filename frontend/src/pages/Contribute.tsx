@@ -1,4 +1,4 @@
-import { SubmissionFormData, type Submission, type SubmissionRequest, type PendingCoverSubmission } from "@/lib/submission";
+import { SubmissionFormData, type SubmittedData, type SubmissionRequest, type PendingCoverSubmission } from "@/lib/submission";
 import { Navigation } from "@/components/Navigation";
 import {
   appendSubmissionCitations, referenceDetailsForForm, parseCitationDetail,
@@ -24,6 +24,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Upload, Loader2, ChevronDown, ArrowLeft, ArrowRight, Star, Trash2, Crop, RotateCw } from "lucide-react";
+import { OpenFullSizeLink } from "@/components/OpenFullSizeLink";
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import type { FormEvent, MouseEvent } from "react";
 import { Link, useNavigate, useLocation, useSearchParams, useParams } from "react-router-dom";
@@ -54,12 +55,12 @@ import { getDateFormats, type DateFormatOption } from "@/constants/markingEnums"
 import { formatReferenceWorkLabel, getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenceWorks";
 import { compactReferenceWorkLine } from "@/lib/referenceWorkDisplay";
 import {
-  getContribution,
-  listContributions,
-  createContribution,
-  deleteOwnContribution,
+  getSubmission,
+  listSubmissions,
+  createSubmission,
+  deleteOwnSubmission,
   getDirectCatalogCodeSuggestion,
-} from "@/services/contributions";
+} from "@/services/submissions";
 import { ENTRY_LABELS } from "@/labels/entry";
 import { SUBMISSION_LABELS } from "@/labels/submission";
 import {
@@ -171,7 +172,7 @@ function appendMarkingBoundaryDate(
 function markingBoundaryDatePayload(
   prefix: MarkingBoundaryPrefix,
   value: PartialDateValue,
-): Submission {
+): SubmittedData {
   if (value.unknown) return { [`${prefix}_unknown`]: true };
   return {
     [`${prefix}_unknown`]: false,
@@ -197,7 +198,7 @@ const LETTERING_SEED_NAMES = new Set([
   "Gothic",
 ]);
 
-type ContributeMode = "new" | "edit-contribution" | "edit-marking";
+type ContributeMode = "new" | "edit-submission" | "edit-marking";
 
 const MODE_COPY: Record<ContributeMode, {
   h1: string;
@@ -215,7 +216,7 @@ const MODE_COPY: Record<ContributeMode, {
     toastTitle: SUBMISSION_LABELS.toast.received,
     toastBody: "Your Marking has been submitted for approval. It will appear in Search after an editor approves it.",
   },
-  "edit-contribution": {
+  "edit-submission": {
     h1: "Edit and resubmit",
     intro: "Update your submission using the editor feedback, then submit to send it back for review.",
     card: "Edit submission",
@@ -312,7 +313,7 @@ function scrollToFirstReferenceDetailError(
 }
 
 /**
- * Per-image tag persisted on Contribution.submitted_data. Marking-image
+ * Per-image tag persisted on Submission.submitted_data. Marking-image
  * uploads can only ever be one of two things from the contributor's POV:
  *
  *   - "photograph" (default) -- a normal photo of the marking on a cover
@@ -353,55 +354,55 @@ const Contribute = () => {
     : NaN;
   const editMarkingId =
     Number.isFinite(editMarkingIdRaw) && editMarkingIdRaw > 0 ? editMarkingIdRaw : null;
-  const editContributionIdRaw =
-    location.state?.editContributionId ??
+  const editSubmissionIdRaw =
+    location.state?.editSubmissionId ??
     (() => {
       const edit = searchParams.get("edit");
       if (!edit) return null;
       const n = parseInt(edit, 10);
       return Number.isNaN(n) ? null : n;
     })();
-  const editContributionId = editContributionIdRaw ?? null;
+  const editSubmissionId = editSubmissionIdRaw ?? null;
   const mode: ContributeMode =
     editMarkingId != null
       ? "edit-marking"
-      : editContributionId != null
-        ? "edit-contribution"
+      : editSubmissionId != null
+        ? "edit-submission"
         : "new";
-  const isEditContribution = mode === "edit-contribution";
+  const isEditSubmission = mode === "edit-submission";
   const isEditMarking = mode === "edit-marking";
-  const [editLoadDone, setEditLoadDone] = useState(!editContributionId);
+  const [editLoadDone, setEditLoadDone] = useState(!editSubmissionId);
   const [editLoadError, setEditLoadError] = useState<string | null>(null);
-  // Status of the contribution we are editing (draft / needs_revision /
+  // Status of the submission we are editing (draft / needs_revision /
   // rejected / pending / approved). Only meaningful when mode is
-  // "edit-contribution"; drives the header copy so a draft does not display
+  // "edit-submission"; drives the header copy so a draft does not display
   // "use the editor feedback" wording.
-  const [loadedContributionStatus, setLoadedContributionStatus] = useState<string | null>(null);
-  // When resuming an edit-contribution draft that targets an existing
+  const [loadedSubmissionStatus, setLoadedSubmissionStatus] = useState<string | null>(null);
+  // When resuming an edit-submission draft that targets an existing
   // marking, this holds that marking's id. Drives both the staleness
   // banner and the page copy ("Submit edit to Marking" vs "Submit new
   // Marking"). Null for new-marking drafts.
   const [resumedEditMarkingId, setResumedEditMarkingId] = useState<number | null>(null);
-  // Resolve page copy. For "edit-contribution" we further split on the
-  // loaded contribution's status so a draft does not show the
+  // Resolve page copy. For "edit-submission" we further split on the
+  // loaded submission's status so a draft does not show the
   // "use the editor feedback" wording reserved for needs_revision /
   // rejected resubmissions, and further on whether the draft targets an
   // existing marking (edit-marking draft) vs a brand-new marking.
   const baseCopy = MODE_COPY[mode];
   // The "Resubmit" / "Edit and resubmit" / "use the editor feedback" wording
-  // baked into MODE_COPY["edit-contribution"] only fits the
+  // baked into MODE_COPY["edit-submission"] only fits the
   // needs_revision / rejected resubmission flow. Drafts (and the brief
   // window before status loads) get a draft-style header + Submit button
   // instead. Status check is an explicit allowlist so a future status
   // value never silently falls back to "Resubmit".
   const isResubmissionStatus =
-    loadedContributionStatus === "needs_revision" ||
-    loadedContributionStatus === "rejected";
-  const isPendingEditContribution = loadedContributionStatus === "pending";
-  const isResumingDraft = isEditContribution && !isResubmissionStatus && !isPendingEditContribution;
+    loadedSubmissionStatus === "needs_revision" ||
+    loadedSubmissionStatus === "rejected";
+  const isPendingEditSubmission = loadedSubmissionStatus === "pending";
+  const isResumingDraft = isEditSubmission && !isResubmissionStatus && !isPendingEditSubmission;
   const isResumingMarkingEditDraft = isResumingDraft && resumedEditMarkingId != null;
   const isMarkingEditAction = isEditMarking || isResumingMarkingEditDraft;
-  const copy = isPendingEditContribution
+  const copy = isPendingEditSubmission
     ? {
         ...baseCopy,
         h1: "Edit pending submission",
@@ -467,7 +468,7 @@ const Contribute = () => {
   const [description, setDescription] = useState("");
   const [displaySubmitterName, setDisplaySubmitterName] = useState(false);
   const [canChangeSubmitterName, setCanChangeSubmitterName] = useState(
-    !isEditMarking && editContributionId == null,
+    !isEditMarking && editSubmissionId == null,
   );
   const [contributorComment, setContributorComment] = useState("");
   const [noMarkingImage, setNoMarkingImage] = useState(false);
@@ -529,6 +530,10 @@ const Contribute = () => {
   const [pendingCoverOn, setPendingCoverOn] = useState(false);
   const [pendingCoverFields, setPendingCoverFields] = useState<PendingCoverFields>({ ...EMPTY_PENDING_COVER });
   const [pendingCoverFiles, setPendingCoverFiles] = useState<File[]>([]);
+  // Captions for pendingCoverFiles, keyed by File identity (the list already
+  // dedupes by identity). A removed file's entry is left behind and ignored:
+  // only files still in pendingCoverFiles are read at submit.
+  const [pendingCoverFileCaptions, setPendingCoverFileCaptions] = useState<Map<File, string>>(() => new Map());
   const [pendingCoverSavedImages, setPendingCoverSavedImages] = useState<PendingCoverSavedImage[]>([]);
   const [pendingCoverRemovedKeys, setPendingCoverRemovedKeys] = useState<string[]>([]);
   const [pendingCoverErrors, setPendingCoverErrors] = useState<PendingCoverErrors>({});
@@ -752,7 +757,7 @@ const Contribute = () => {
         setDateFormatOptions(dateFmt);
 
         // Default Lettering = Normal when creating a new submission.
-        if (!editContributionId) {
+        if (!editSubmissionId) {
           if (!letteringId) {
             const normal = lettering.find((o) => String(o.name || "").trim().toLowerCase() === "normal");
             if (normal) setLetteringId(String(normal.id));
@@ -764,7 +769,7 @@ const Contribute = () => {
         setDateFormatOptions([]);
       })
       .finally(() => setCatalogOptionsLoading(false));
-  }, [editContributionId, letteringId]);
+  }, [editSubmissionId, letteringId]);
 
   useEffect(() => {
     if (referenceWorksFetched || referenceWorksLoading) return;
@@ -887,18 +892,18 @@ const Contribute = () => {
     catalogCodeTouched,
   ]);
 
-  // Load contribution for edit-and-resubmit (rejected / needs_revision)
+  // Load submission for edit-and-resubmit (rejected / needs_revision)
   useEffect(() => {
-    if (!editContributionId) {
+    if (!editSubmissionId) {
       setEditLoadDone(true);
       return;
     }
     let cancelled = false;
-    getContribution(editContributionId)
-      .then((contribution) => {
+    getSubmission(editSubmissionId)
+      .then((submission) => {
         if (cancelled) return;
-        setLoadedContributionStatus(String(contribution.status ?? "").toLowerCase() || null);
-        const sd = contribution.submittedData;
+        setLoadedSubmissionStatus(String(submission.status ?? "").toLowerCase() || null);
+        const sd = submission.submittedData;
         if (!sd || typeof sd !== "object") {
           setEditLoadDone(true);
           return;
@@ -1001,11 +1006,20 @@ const Contribute = () => {
           });
           setPendingCoverSavedImages(
             pcMetas
-              .map((m) => String(m?.storage_filename ?? "").replace(/^\/+/, ""))
-              .filter((sf) => sf.length > 0)
-              .map((sf) => ({ key: sf, url: `${mediaBase}/${sf}` })),
+              .map((m) => ({
+                sf: String(m?.storage_filename ?? "").replace(/^\/+/, ""),
+                caption: String(m?.image_description ?? ""),
+              }))
+              .filter(({ sf }) => sf.length > 0)
+              .map(({ sf, caption }) => ({
+                key: sf,
+                url: `${mediaBase}/${sf}`,
+                description: caption,
+                savedDescription: caption,
+              })),
           );
           setPendingCoverFiles([]);
+          setPendingCoverFileCaptions(new Map());
           setPendingCoverRemovedKeys([]);
         } else {
           setPendingCoverOn(false);
@@ -1113,7 +1127,7 @@ const Contribute = () => {
       })
       .catch((err) => {
         if (!cancelled) {
-          setEditLoadError(err instanceof Error ? err.message : "Failed to load contribution");
+          setEditLoadError(err instanceof Error ? err.message : "Failed to load submission");
           setEditLoadDone(true);
         }
       });
@@ -1125,7 +1139,7 @@ const Contribute = () => {
     // resolution; adding it to deps would refire the entire fetch every
     // time options load, so we accept the snapshot at fetch time.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editContributionId]);
+  }, [editSubmissionId]);
 
   // The Marking fields a Contributor may change, set from a catalog record
   // (getMarkingByIdRaw). Submit Edit uses it and then adds its edit-only state;
@@ -1201,7 +1215,7 @@ const Contribute = () => {
   // Before loading, dedupe against any existing open draft this user has
   // for the same marking. If one is found, redirect to its resume URL so
   // we never fork a parallel draft. The backend also enforces this in
-  // ContributionSubmitView.post (collapse-on-create) -- this fetch is a
+  // SubmissionSubmitView.post (collapse-on-create) -- this fetch is a
   // UX optimization so the user is not put through "fresh form, then
   // suddenly redirected" once they start typing.
   useEffect(() => {
@@ -1277,7 +1291,7 @@ const Contribute = () => {
       });
     };
 
-    listContributions({ status: "draft", ordering: "-created_at" })
+    listSubmissions({ status: "draft", ordering: "-created_at" })
       .then(({ items }) => {
         if (cancelled) return;
         const match = items.find((r) => {
@@ -1443,14 +1457,27 @@ const Contribute = () => {
   // cropped uploads and with any upload that looks like a whole cover, so the
   // scan the contributor already has becomes the Cover's image without a second
   // pick. Files already listed are not added twice.
+  // A seeded file also takes the Marking tile's caption as its starting
+  // caption, unless the contributor already typed one for it here.
   const enablePendingCover = () => {
     setPendingCoverOn(true);
+    const seeded: Array<[File, string]> = [];
+    for (const item of gallery) {
+      if (item.kind !== "new") continue;
+      const candidate = item.originalFile ?? (coverLikeImageKeys.includes(item.key) ? item.file : null);
+      if (candidate) seeded.push([candidate, item.description]);
+    }
     setPendingCoverFiles((prev) => {
       const next = [...prev];
-      for (const item of gallery) {
-        if (item.kind !== "new") continue;
-        const candidate = item.originalFile ?? (coverLikeImageKeys.includes(item.key) ? item.file : null);
-        if (candidate && !next.includes(candidate)) next.push(candidate);
+      for (const [file] of seeded) {
+        if (!next.includes(file)) next.push(file);
+      }
+      return next;
+    });
+    setPendingCoverFileCaptions((prev) => {
+      const next = new Map(prev);
+      for (const [file, caption] of seeded) {
+        if (caption.trim() && !next.get(file)?.trim()) next.set(file, caption);
       }
       return next;
     });
@@ -1460,7 +1487,7 @@ const Contribute = () => {
   const draftCoverTargetId = isEditMarking ? editMarkingId : resumedEditMarkingId;
   // Trello T92: turn a whole-cover upload on a Marking edit into a Cover draft
   // for the published Marking. This is the same request the cover editor's
-  // Save Draft sends (CoverEdit.tsx submitCoverContribution), with the file
+  // Save Draft sends (CoverEdit.tsx submitCoverSubmission), with the file
   // the contributor picked -- the uncropped original when they already cropped.
   // The tile leaves this edit only once the server holds the draft, so a
   // failed request loses nothing; the draft is then the contributor's to
@@ -1493,14 +1520,19 @@ const Contribute = () => {
       form.append("marking_id", String(draftCoverTargetId));
       form.append("cover_image", file, file.name);
       form.append("cover_image_tags", JSON.stringify(["photograph"]));
+      // The tile's caption goes with the image, positional like the Cover
+      // form's: e.g. ["Front"]. Omitted when the tile has none.
+      if (item.description.trim()) {
+        form.append("cover_image_descriptions", JSON.stringify([item.description.trim()]));
+      }
       form.append("image_order", JSON.stringify(["__new__"]));
-      const result = await createContribution(form);
+      const result = await createSubmission(form);
       setGallery((prev) => prev.filter((g) => g.key !== key));
       setCoverLikeImageKeys((prev) => prev.filter((k) => k !== key));
       setLowResolutionImageKeys((prev) => prev.filter((k) => k !== key));
       setDraftCoverNotice(
-        result.contributionId != null
-          ? { draftId: result.contributionId, markingId: draftCoverTargetId }
+        result.submissionId != null
+          ? { draftId: result.submissionId, markingId: draftCoverTargetId }
           : null,
       );
       toast({ title: DRAFT_COVER_FROM_EDIT.savedTitle, description: DRAFT_COVER_FROM_EDIT.savedBody });
@@ -1977,7 +2009,7 @@ const Contribute = () => {
       const caption = (item.description ?? "").trim();
       if (caption !== (item.savedDescription ?? "").trim()) changedSavedCaptions[item.url] = caption;
     }
-    const sendSavedCaptions = isEditContribution && Object.keys(changedSavedCaptions).length > 0;
+    const sendSavedCaptions = isEditSubmission && Object.keys(changedSavedCaptions).length > 0;
     const oversized = allImageFiles.filter((f) => f.size > MAX_IMAGE_SIZE_MB * 1024 * 1024);
     if (oversized.length) {
       toast({
@@ -2034,14 +2066,14 @@ const Contribute = () => {
       }));
 
       const sendPendingCover = showPendingCoverSection && pendingCoverOn;
-      const dropPendingCover = showPendingCoverSection && !pendingCoverOn && isEditContribution;
+      const dropPendingCover = showPendingCoverSection && !pendingCoverOn && isEditSubmission;
       if (allImageFiles.length > 0 || isEditMarking || sendPendingCover) {
         const form = new SubmissionFormData();
         if (isStateEditor && !isMarkingEditAction) {
           form.append("marking_dates_seen", JSON.stringify(datesToSend));
         }
-        if (isEditContribution && editContributionId != null) {
-          form.append("edit_contribution_id", String(editContributionId));
+        if (isEditSubmission && editSubmissionId != null) {
+          form.append("edit_submission_id", String(editSubmissionId));
         }
         if (isEditMarking && editMarkingId != null) {
           form.append("edit_marking_id", String(editMarkingId));
@@ -2088,7 +2120,7 @@ const Contribute = () => {
         // Both spellings carry the same value on purpose: the backend's
         // _resolve_lettering accepts either, and older payloads use the other
         // one. Do not "clean up" to a single key without changing
-        // _LETTERING_KEYS in common/contribution_apply.py first.
+        // _LETTERING_KEYS in common/submission_apply.py first.
         const letteringToSend = isManuscriptSelected ? "" : letteringId || "";
         form.append("lettering_style_id", letteringToSend);
         form.append("lettering_id", letteringToSend);
@@ -2116,7 +2148,7 @@ const Contribute = () => {
           form.append("contributor_comment", trimmedComment);
           form.append("comment_for_editor", trimmedComment);
         }
-        if ((isEditMarking || isEditContribution) && removedExistingImageKeys.length > 0) {
+        if ((isEditMarking || isEditSubmission) && removedExistingImageKeys.length > 0) {
           form.append("removed_existing_image_keys", JSON.stringify(removedExistingImageKeys));
         }
         if (noMarkingImage) {
@@ -2140,6 +2172,22 @@ const Contribute = () => {
           for (const file of pendingCoverFiles) {
             form.append("pending_cover_image", file, file.name);
           }
+          // Positional over the pending_cover_image files above, e.g.
+          // ["Front", "", "Back"]; omitted when no new cover image has a caption.
+          const coverCaptions = pendingCoverFiles.map((file) => (pendingCoverFileCaptions.get(file) ?? "").trim());
+          if (coverCaptions.some((c) => c.length > 0)) {
+            form.append("pending_cover_image_descriptions", JSON.stringify(coverCaptions));
+          }
+          // Changed captions of cover images saved with this draft, keyed by
+          // storage filename, e.g. {"ny/abc.jpg": "Back"}; "" clears one.
+          const changedCoverCaptions: Record<string, string> = {};
+          for (const img of pendingCoverSavedImages) {
+            const caption = img.description.trim();
+            if (caption !== img.savedDescription.trim()) changedCoverCaptions[img.key] = caption;
+          }
+          if (Object.keys(changedCoverCaptions).length > 0) {
+            form.append("pending_cover_existing_image_descriptions", JSON.stringify(changedCoverCaptions));
+          }
           if (pendingCoverRemovedKeys.length > 0) {
             form.append("pending_cover_removed_image_keys", JSON.stringify(pendingCoverRemovedKeys));
           }
@@ -2162,8 +2210,8 @@ const Contribute = () => {
           Object.fromEntries(existingTagMapEntries);
         body = {
           ...(isStateEditor && !isMarkingEditAction ? { marking_dates_seen: datesToSend } : {}),
-          ...(isEditContribution && editContributionId != null
-            ? { edit_contribution_id: editContributionId }
+          ...(isEditSubmission && editSubmissionId != null
+            ? { edit_submission_id: editSubmissionId }
             : {}),
           ...(isEditMarking && editMarkingId != null
             ? { edit_marking_id: editMarkingId }
@@ -2218,7 +2266,7 @@ const Contribute = () => {
           ...(trimmedComment
             ? { contributor_comment: trimmedComment, comment_for_editor: trimmedComment }
             : {}),
-          ...((isEditMarking || isEditContribution) && removedExistingImageKeys.length > 0
+          ...((isEditMarking || isEditSubmission) && removedExistingImageKeys.length > 0
             ? { removed_existing_image_keys: removedExistingImageKeys }
             : {}),
           ...(isEditMarking && Object.keys(existingTagMap).length > 0
@@ -2234,7 +2282,7 @@ const Contribute = () => {
         };
       }
 
-      const result = await createContribution(body);
+      const result = await createSubmission(body);
 
       toast({
         title: saveAsDraft ? "Draft saved" : copy.toastTitle,
@@ -2248,10 +2296,10 @@ const Contribute = () => {
         return;
       }
 
-      if (isEditContribution) {
-        const returnedId = result.contributionId ?? editContributionId;
+      if (isEditSubmission) {
+        const returnedId = result.submissionId ?? editSubmissionId;
         if (returnedId != null) {
-          navigate(`/contribution/${returnedId}`, { state: { fromDashboard: true } });
+          navigate(`/submission/${returnedId}`, { state: { fromDashboard: true } });
           return;
         }
       }
@@ -2261,10 +2309,10 @@ const Contribute = () => {
         const fromDashboardDirect = (location.state as Record<string, unknown> | null)?.fromDashboardDirect;
         const fromDashboardViaDetail = (location.state as Record<string, unknown> | null)?.fromDashboardViaDetail;
         const fromSearch = (location.state as Record<string, unknown> | null)?.fromSearch;
-        if (result.contributionId != null) {
+        if (result.submissionId != null) {
           // issues.md 175: an edit started from the catalog returns there after
           // the editor's decision. `?from=` is what the review screen reads.
-          const path = `/contribution/${result.contributionId}`;
+          const path = `/submission/${result.submissionId}`;
           navigate(fromSearch ? withReturnTo(path, catalogHref()) : path, {
             state: { fromDashboard: true },
           });
@@ -2441,6 +2489,12 @@ const Contribute = () => {
                             Default
                           </span>
                         )}
+                      </div>
+                      <div className="px-2 pb-1">
+                        <OpenFullSizeLink
+                          file={item.kind === "new" ? item.file : undefined}
+                          href={item.kind === "existing" ? item.url : undefined}
+                        />
                       </div>
                       <ImageCaptionInput
                         id={`gallery-caption-${item.key}`}
@@ -2722,14 +2776,14 @@ const Contribute = () => {
             <p className="text-muted-foreground">{copy.intro}</p>
           </div>
 
-          {((isEditContribution && !editLoadDone) || (isEditMarking && loadingRecord)) && (
+          {((isEditSubmission && !editLoadDone) || (isEditMarking && loadingRecord)) && (
             <div className="flex items-center justify-center py-12 gap-2 text-muted-foreground">
               <Loader2 className="h-6 w-6 animate-spin" />
               <span>Loading record...</span>
             </div>
           )}
 
-          {((isEditContribution && editLoadDone && editLoadError) ||
+          {((isEditSubmission && editLoadDone && editLoadError) ||
             (isEditMarking && !loadingRecord && recordError)) && (
             <Card className="border-destructive/50">
               <CardContent className="pt-6">
@@ -2742,7 +2796,7 @@ const Contribute = () => {
           )}
 
           {(mode === "new" ||
-            (isEditContribution && editLoadDone && !editLoadError) ||
+            (isEditSubmission && editLoadDone && !editLoadError) ||
             (isEditMarking && !loadingRecord && !recordError)) && (
           <div className="grid lg:grid-cols-3 gap-8">
             <div className="lg:col-span-2">
@@ -2802,17 +2856,17 @@ const Contribute = () => {
                           variant="outline"
                           size="sm"
                           className="border-amber-300 text-amber-800 hover:bg-amber-100 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-900/40"
-                          disabled={discardingDraft || editContributionId == null}
+                          disabled={discardingDraft || editSubmissionId == null}
                           onClick={async () => {
-                            if (editContributionId == null || resumedEditMarkingId == null) return;
+                            if (editSubmissionId == null || resumedEditMarkingId == null) return;
                             const ok = window.confirm(
                               "Discard this draft and start over from the current marking? Your saved draft will be deleted.",
                             );
                             if (!ok) return;
                             setDiscardingDraft(true);
                             try {
-                              await createContribution({
-                                edit_contribution_id: editContributionId,
+                              await createSubmission({
+                                edit_submission_id: editSubmissionId,
                                 abandon_draft: true,
                               });
                               navigate(`/edit/${resumedEditMarkingId}`, { replace: true });
@@ -3682,6 +3736,15 @@ const Contribute = () => {
                         files={pendingCoverFiles}
                         onAddFiles={(picked) => setPendingCoverFiles((prev) => [...prev, ...picked])}
                         onRemoveFile={(index) => setPendingCoverFiles((prev) => prev.filter((_, i) => i !== index))}
+                        fileCaption={(file) => pendingCoverFileCaptions.get(file) ?? ""}
+                        onFileCaptionChange={(file, caption) =>
+                          setPendingCoverFileCaptions((prev) => new Map(prev).set(file, caption))
+                        }
+                        onSavedImageCaptionChange={(key, caption) =>
+                          setPendingCoverSavedImages((prev) =>
+                            prev.map((img) => (img.key === key ? { ...img, description: caption } : img)),
+                          )
+                        }
                         savedImages={pendingCoverSavedImages}
                         onRemoveSavedImage={(key) => {
                           setPendingCoverSavedImages((prev) => prev.filter((img) => img.key !== key));
@@ -3716,7 +3779,7 @@ const Contribute = () => {
                     </div>
 
                     <div className="flex flex-col sm:flex-row gap-3">
-                      {!isPendingEditContribution && (
+                      {!isPendingEditSubmission && (
                         <Button
                           type="button"
                           variant="outline"
@@ -3751,7 +3814,7 @@ const Contribute = () => {
                         </Button>
                       )}
                     </div>
-                    {isResumingDraft && editContributionId != null && (
+                    {isResumingDraft && editSubmissionId != null && (
                       <div className="pt-2 flex justify-end">
                         <Button
                           type="button"
@@ -3765,7 +3828,7 @@ const Contribute = () => {
                             if (!ok) return;
                             setDeletingDraft(true);
                             try {
-                              await deleteOwnContribution(editContributionId);
+                              await deleteOwnSubmission(editSubmissionId);
                               toast({ title: "Draft deleted" });
                               navigate(dashboardHref());
                             } catch (err: unknown) {

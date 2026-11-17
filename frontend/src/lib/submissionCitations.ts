@@ -1,4 +1,4 @@
-import type { Submission, SubmissionReference, SubmissionFormData } from "@/lib/submission";
+import type { SubmittedData, SubmissionReference, SubmissionFormData } from "@/lib/submission";
 import type { EntryCitationItem } from "@/components/entry-detail/EntryCitationsCard";
 import type { ReferenceWorkRecord } from "@/services/referenceWorks";
 
@@ -45,7 +45,7 @@ export function appendSubmissionCitations(
 }
 
 export function submissionCitations(
-  data: Submission,
+  data: SubmittedData,
   referenceWorks: ReferenceWorkRecord[],
 ): EntryCitationItem[] {
   const rawIds = data.reference_work_ids;

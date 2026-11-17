@@ -9,19 +9,18 @@
 
 1. From the project root:
    ```bash
-   woco createsuperuser
+   ./woco createsuperuser
    ```
 2. Use the credentials above when prompted.
 3. Log in at:
    - Local: `http://127.0.0.1:8000/admin/`
-   - Staging: `https://hellowoco.app/admin/`
 
 ## Optional: Create a regular user via Django shell
 
 From the project root, with the default local database configured, run:
 
 ```bash
-woco shell
+./woco shell
 ```
 
 ```python
@@ -37,4 +36,5 @@ User.objects.create_user(email="admin@worldcovers.test", password="TestAdmin123!
 
 ## Security Note
 
-Use strong, unique passwords for any non-test environment.
+These credentials are for a local database only. Never create this account
+on `woco.dev` (staging) or `hellowoco.app` (production).

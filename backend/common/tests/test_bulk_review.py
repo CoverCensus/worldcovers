@@ -6,12 +6,12 @@ new:
 
   * REGION SCOPING. Bulk is the first detail=False WRITE action in this API.
     Every other write is detail=True, so get_object() runs
-    check_object_permissions and CanReviewContribution enforces collection
+    check_object_permissions and CanReviewSubmission enforces collection
     assignment for free. detail=False never calls get_object(), so that check
     vanishes unless the view re-asserts it per row.
   * PARTIAL FAILURE. A batch that rolls back its successes because row 17 was
     bad is worse than no batch at all -- approval mints permanent codes and
-    consolidate_superseded_contributions deletes rows, so re-running is not
+    consolidate_superseded_submissions deletes rows, so re-running is not
     free.
   * THE HUMAN SUBMISSIONS. The queue is live. "Select all matching" on an
     unfiltered queue would sweep up the eight real people who submitted into
@@ -23,15 +23,15 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from common.models import (
-    Collection, CollectionAssignment, Contribution, Marking, PostOffice,
+    Collection, CollectionAssignment, Submission, Marking, PostOffice,
     PostOfficeRegion, Region, SubmissionTransaction,
 )
 
 User = get_user_model()
 
-BULK_APPROVE = "/api/v2/contributions/bulk-approve/"
-BULK_REJECT = "/api/v2/contributions/bulk-reject/"
-IDS = "/api/v2/contributions/ids/"
+BULK_APPROVE = "/api/v2/submissions/bulk-approve/"
+BULK_REJECT = "/api/v2/submissions/bulk-reject/"
+IDS = "/api/v2/submissions/ids/"
 
 
 class BulkReviewTests(TestCase):
@@ -41,7 +41,7 @@ class BulkReviewTests(TestCase):
 
         editors = Group.objects.create(name="Editors")
         editors.permissions.add(
-            Permission.objects.get(codename="review_contribution"))
+            Permission.objects.get(codename="review_submission"))
 
         self.va, self.va_collection = self._region("Virginia", "VA")
         self.wv, self.wv_collection = self._region("West Virginia", "WV")
@@ -83,9 +83,9 @@ class BulkReviewTests(TestCase):
         if vphc:
             payload["vphc"] = {"key": "k", "flags": [], "src": "T1:r1"}
         payload.update(extra)
-        return Contribution.objects.create(
+        return Submission.objects.create(
             contributor=self.admin, collection=collection,
-            status=Contribution.STATUS_PENDING, submitted_data=payload,
+            status=Submission.STATUS_PENDING, submitted_data=payload,
             created_by=self.admin, modified_by=self.admin)
 
     # ---------------------------------------------------------------- security
@@ -93,7 +93,7 @@ class BulkReviewTests(TestCase):
     def test_editor_cannot_bulk_approve_outside_their_region(self):
         """The check that detail=False silently removes.
 
-        CanReviewContribution.has_object_permission would have caught this on
+        CanReviewSubmission.has_object_permission would have caught this on
         any detail=True action, because get_object() triggers it. A bulk
         endpoint never calls get_object(), so without an explicit per-row check
         a Virginia editor approves West Virginia rows 50 at a time.
@@ -109,7 +109,7 @@ class BulkReviewTests(TestCase):
         self.assertEqual([f["id"] for f in response.data["failed"]], [theirs.pk])
 
         theirs.refresh_from_db()
-        self.assertEqual(theirs.status, Contribution.STATUS_PENDING)
+        self.assertEqual(theirs.status, Submission.STATUS_PENDING)
 
     def test_editor_cannot_bulk_reject_outside_their_region(self):
         theirs = self._pending(self.wv_collection)
@@ -119,7 +119,7 @@ class BulkReviewTests(TestCase):
 
         self.assertEqual(response.data["rejected"], [])
         theirs.refresh_from_db()
-        self.assertEqual(theirs.status, Contribution.STATUS_PENDING)
+        self.assertEqual(theirs.status, Submission.STATUS_PENDING)
 
     def test_anonymous_is_refused(self):
         contrib = self._pending()
@@ -154,14 +154,14 @@ class BulkReviewTests(TestCase):
         good_before.refresh_from_db()
         good_after.refresh_from_db()
         broken.refresh_from_db()
-        self.assertEqual(good_before.status, Contribution.STATUS_APPROVED)
-        self.assertEqual(good_after.status, Contribution.STATUS_APPROVED)
-        self.assertEqual(broken.status, Contribution.STATUS_PENDING)
+        self.assertEqual(good_before.status, Submission.STATUS_APPROVED)
+        self.assertEqual(good_after.status, Submission.STATUS_APPROVED)
+        self.assertEqual(broken.status, Submission.STATUS_PENDING)
 
     def test_a_non_pending_row_is_reported_not_fatal(self):
         pending = self._pending()
         already = self._pending()
-        already.status = Contribution.STATUS_APPROVED
+        already.status = Submission.STATUS_APPROVED
         already.save(update_fields=["status"])
 
         response = self.client.post(
@@ -201,7 +201,7 @@ class BulkReviewTests(TestCase):
 
         self.assertEqual(len(response.data["approved"]), 5)
         codes = [
-            Contribution.objects.get(pk=pk).marking.code
+            Submission.objects.get(pk=pk).marking.code
             for pk in response.data["approved"]
         ]
         self.assertEqual(len(set(codes)), 5, codes)
@@ -236,7 +236,7 @@ class BulkReviewTests(TestCase):
         self._pending(town="RICHMOND")
 
         listed = self.client.get(
-            "/api/v2/contributions/",
+            "/api/v2/submissions/",
             {"mode": "editor", "town": "FARMVILLE", "page_size": 100})
         ids = self.client.get(IDS, {"mode": "editor", "town": "FARMVILLE"})
 
@@ -245,7 +245,7 @@ class BulkReviewTests(TestCase):
             set(ids.data["ids"]), {r["id"] for r in listed.data["results"]})
 
     def test_ids_route_is_not_shadowed_by_the_detail_route(self):
-        """`/contributions/ids/` must not resolve as `/contributions/<pk>/`."""
+        """`/submissions/ids/` must not resolve as `/submissions/<pk>/`."""
         response = self.client.get(IDS, {"mode": "editor"})
 
         self.assertEqual(response.status_code, 200)

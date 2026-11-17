@@ -3,7 +3,7 @@
 The other tests in this directory use three hand-built fixture rows. This one
 runs the actual markings produced by `tools/vphc_manuscript_ledger.py` -- 449
 West Virginia, 2,931 Virginia -- through `apply_vphc_ledger` and then approves
-every one of them through the same `_approve_contribution` path the dashboard
+every one of them through the same `_approve_submission` path the dashboard
 and `tools/vphc_bulk_approve.py` use, in an isolated test database. It is the
 closest thing to the live run that can be had without touching production, and
 it is worth re-running immediately before the live run.
@@ -20,8 +20,8 @@ otherwise quintuple the runtime of `manage.py test common`. Opt in:
 
 It found two defects the fixture tests could not:
 
-  * `apply_contribution_to_catalog` does not mint a catalog code -- that
-    happens in `_approve_contribution` -- so approving the other way yields
+  * `apply_submission_to_catalog` does not mint a catalog code -- that
+    happens in `_approve_submission` -- so approving the other way yields
     markings with `code=NULL` and no unique-constraint complaint, because MySQL
     does not collide NULLs in a unique index.
   * `_write_ledger` appended to the shipped `LEDGER.jsonl`, the audit trail of
@@ -36,9 +36,9 @@ from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.test import TestCase, override_settings
 
-from common.api.v2.views import _approve_contribution
+from common.api.v2.views import _approve_submission
 from common.models import (
-    Citation, Collection, Color, Contribution, Marking, PostOffice,
+    Citation, Collection, Color, Submission, Marking, PostOffice,
     ReferenceWork, Region,
 )
 
@@ -99,9 +99,9 @@ class RealManuscriptLedgerSmoke(TestCase):
                     applied_log=log_rel,
                     only="create", verbosity=1)
 
-                contributions = list(Contribution.objects.all())
+                submissions = list(Submission.objects.all())
                 print(f"\n  ledger lines            {len(lines)}")
-                print(f"  contributions created   {len(contributions)}")
+                print(f"  submissions created   {len(submissions)}")
 
                 skipped = os.path.join(VPHC_DIR, "manuscripts", "skipped.csv")
                 if os.path.exists(skipped):
@@ -109,22 +109,22 @@ class RealManuscriptLedgerSmoke(TestCase):
 
                 # Every one is a manuscript, and none carries is_irreg.
                 self.assertTrue(all(c.submitted_data["is_manuscript"]
-                                    for c in contributions))
+                                    for c in submissions))
                 self.assertFalse(any("is_irreg" in c.submitted_data
-                                     for c in contributions))
-                self.assertTrue(all(c.status == Contribution.STATUS_PENDING
-                                    for c in contributions))
+                                     for c in submissions))
+                self.assertTrue(all(c.status == Submission.STATUS_PENDING
+                                    for c in submissions))
 
                 # Approve every one through the SAME path the dashboard and
-                # vphc_bulk_approve.py use. apply_contribution_to_catalog on
+                # vphc_bulk_approve.py use. apply_submission_to_catalog on
                 # its own does NOT mint a catalog code -- final_code_for_
-                # contribution runs in _approve_contribution -- so approving
+                # submission runs in _approve_submission -- so approving
                 # the other way silently yields 449 markings with code=NULL.
-                for c in contributions:
-                    _approve_contribution(c, actor=self.user, review_notes="")
+                for c in submissions:
+                    _approve_submission(c, actor=self.user, review_notes="")
                 markings = list(Marking.objects.all())
 
-        self.assertEqual(len(markings), len(contributions))
+        self.assertEqual(len(markings), len(submissions))
         print(f"  markings approved       {len(markings)}")
         print(f"  post offices created    {PostOffice.objects.count()}")
         print(f"  citations               {Citation.objects.count()}")

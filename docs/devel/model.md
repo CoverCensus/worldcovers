@@ -2,7 +2,56 @@
 
 ## Summary
 
-This document defines the structural vocabulary for data accessible through WorldCovers. Seventeen tables describe the philatelic domain's persistent state. `markings` is the central entity - the catalog entry itself - unifying town markings, rate markings, and auxiliary markings under a single type discriminator. Each row in `markings` carries the authoritative catalog text, the physical inscription of the device, and a reference to a row in `post_offices`, whose jurisdictional history is recorded in `post_office_regions` against a time-bounded `regions` hierarchy. `covers` are observations of markings, linked through the `cover_markings` junction, which also records per-observation positional context and review state. Marking classification is represented through two primary editorial dimensions: `shapes` and `letterings`. Both remain provisional editorial vocabularies: their current records preserve catalog usage patterns and known inconsistencies, and therefore do not yet constitute fully orthogonal or exhaustively normalized taxonomies. Curatorial responsibility is expressed through `collections`, each of which wraps exactly one region and serves as the routing target for contributions submitted within that region. Two junction tables resolve the document's many-to-many associations: `cover_markings` (covers to markings) and `post_office_regions` (post offices to regions). The latter exists because a post office is a fixed geographic place whose political jurisdiction can change over time; a marking's effective region context is derived by intersecting the post office's region associations with the marking's aggregated `dates_seen` (both those attached directly to the marking and those attached to its associated covers). Postmasters and their appointment events provide the recorded personnel history of each office; inferred service spans are for display only. System-internal tables (contributions, submission transactions, version snapshots, recycle-bin sidecars, FAQ entries, and role assignments) are intentionally not modeled in this document; they live alongside the domain tables in `backend/common/`.
+This document defines the tables that hold catalog data. It is pure
+specification: it says what the tables mean, not what is built.
+
+Read the [ER diagram](#er-diagram) first, then the table you need.
+
+### The Five Ideas To Hold
+
+1. **`markings` is the center.** A row is one catalog entry: a Townmark,
+   Ratemark, or Auxmark. One `type` field tells them apart. The row holds
+   the catalog text and the inscription on the device.
+2. **A Marking belongs to one Post Office.** `post_offices` is a fixed
+   place. Its jurisdiction can change over time, so `post_office_regions`
+   links it to rows in `regions`, each link with dates.
+3. **A Cover is an observation of Markings.** `covers` link to `markings`
+   through `cover_markings`. That link row also records where the Marking
+   sits on the Cover and its review state.
+4. **A Marking's Region context is derived, not stored.** Take the Post
+   Office's Region links and keep the ones whose dates overlap the
+   Marking's `dates_seen`. `dates_seen` rows can hang on the Marking itself
+   or on its Covers; both count.
+5. **A Collection is review responsibility for one Region.** Each row in
+   `collections` wraps exactly one Region. A Submission for that Region is
+   routed to that Collection's Editors.
+
+### Table Groups
+
+| Group | Tables |
+|---|---|
+| Entries | `markings`, `covers`, `cover_markings` |
+| Evidence on an Entry | `dates_seen`, `images`, `citations`, `cover_valuations` |
+| Classification | `shapes`, `letterings`, `colors` |
+| Place | `post_offices`, `regions`, `post_office_regions` |
+| People at a Post Office | `postmasters`, `postmaster_tenures` |
+| Sources | `reference_works` |
+| Review responsibility | `collections` |
+
+That is seventeen tables. Two of them are junction tables for many-to-many
+links: `cover_markings` (Covers to Markings) and `post_office_regions`
+(Post Offices to Regions).
+
+### Limits Of This Document
+
+- `shapes` and `letterings` are provisional vocabularies. They keep the
+  source catalogs' usage, including known inconsistencies. Do not treat
+  them as complete or non-overlapping.
+- A Postmaster's service span shown in the UI is inferred from appointment
+  events for display. It is not stored as a sourced date.
+- Workflow tables are not described here: Submissions, Submission
+  transactions, version snapshots, recycle-bin rows, FAQ entries, and role
+  assignments. Their only definition is `backend/common/models.py`.
 
 ## Domain Tables
 

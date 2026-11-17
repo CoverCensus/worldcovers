@@ -145,7 +145,7 @@ class Marking(TimestampedModel):
     # objects: default manager, EXCLUDES recycle-binned markings.
     # all_objects: unfiltered, INCLUDES recycle-binned markings.
     # base_manager_name='all_objects' makes Django's related/FK access
-    # (contribution.marking, cover_marking.marking, etc.) resolve via the
+    # (submission.marking, cover_marking.marking, etc.) resolve via the
     # unfiltered manager so structural references never break on a removed row.
     objects = MarkingManager()
     all_objects = MarkingQuerySet.as_manager()
@@ -211,10 +211,10 @@ class Marking(TimestampedModel):
         return f'{self.type} #{self.pk}'
 
 
-class Contribution(TimestampedModel):
+class Submission(TimestampedModel):
     """
-    Moderation ticket for catalog contributions.
-    Submissions create a Contribution instead of directly updating the catalog.
+    Moderation ticket for catalog submissions.
+    Submissions create a Submission instead of directly updating the catalog.
     Editors approve/reject; on approval, submitted_data is applied to Marking.
 
     Inherits TimestampedModel: created_date / modified_date / created_by /
@@ -235,53 +235,53 @@ class Contribution(TimestampedModel):
         (STATUS_NEEDS_REVISION, "Needs revision"),
     ]
     id = models.AutoField(primary_key=True)
-    contributor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='contributions')
-    marking = models.OneToOneField(Marking, on_delete=models.CASCADE, related_name='contribution', null=True, blank=True, help_text='Set when approved; Marking created from submitted_data for new entries')
-    # Routing target: which institutional Collection this contribution belongs to.
+    contributor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name='submissions')
+    marking = models.OneToOneField(Marking, on_delete=models.CASCADE, related_name='submission', null=True, blank=True, help_text='Set when approved; Marking created from submitted_data for new entries')
+    # Routing target: which institutional Collection this submission belongs to.
     # Resolved at submit time from the contributor-supplied state. NOT NULL -- every
-    # contribution must land in a Collection so the right Editors see it.
-    collection = models.ForeignKey('Collection', on_delete=models.PROTECT, related_name='contributions')
+    # submission must land in a Collection so the right Editors see it.
+    collection = models.ForeignKey('Collection', on_delete=models.PROTECT, related_name='submissions')
     submitted_data = models.JSONField(default=dict, blank=True, help_text='Proposed changes (state, town, type, color, description, etc.)')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
-    reviewer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='reviewed_contributions')
+    reviewer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='reviewed_submissions')
     review_notes = models.TextField(blank=True)
 
     class Meta:
-        db_table = 'Contributions'
-        verbose_name = 'Contribution'
-        verbose_name_plural = 'Contributions'
+        db_table = 'Submissions'
+        verbose_name = 'Submission'
+        verbose_name_plural = 'Submissions'
         ordering = ['-created_date']
         permissions = [
-            ('review_contribution', 'Can review (approve / reject) contributions'),
+            ('review_submission', 'Can review (approve / reject) submissions'),
         ]
 
     def __str__(self):
-        return f'Contribution #{self.id} ({self.status})'
+        return f'Submission #{self.id} ({self.status})'
 
     def apply_to_catalog(self):
-        from common.contribution_apply import apply_contribution_to_catalog
-        return apply_contribution_to_catalog(self)
+        from common.submission_apply import apply_submission_to_catalog
+        return apply_submission_to_catalog(self)
 
 
-class ContributionRecycleBin(models.Model):
+class SubmissionRecycleBin(models.Model):
     """
-    Archive sidecar for Contribution (Issue #89). The presence of a row here
-    means the contribution has been cleared off the *editor* review dashboard;
-    the Contribution row itself is never mutated or deleted, so its status,
+    Archive sidecar for Submission (Issue #89). The presence of a row here
+    means the submission has been cleared off the *editor* review dashboard;
+    the Submission row itself is never mutated or deleted, so its status,
     review notes and audit trail stay intact and it can be restored.
 
     Deliberately NOT a manager override, unlike MarkingRecycleBin and
     CoverRecycleBin. Archiving is editor-side housekeeping, not deletion: the
     contributor must keep seeing their own submission and the editor's feedback
-    on it. Only the editor queue (_get_editor_contribution_queryset) filters on
-    this sidecar -- see the visibility notes on ContributionViewSet.get_queryset.
+    on it. Only the editor queue (_get_editor_submission_queryset) filters on
+    this sidecar -- see the visibility notes on SubmissionViewSet.get_queryset.
 
-    Only a REVIEWED contribution can be archived (approved / rejected /
+    Only a REVIEWED submission can be archived (approved / rejected /
     needs_revision). A pending one has to be decided first, so nothing leaves
     the review queue without a decision.
     """
-    contribution = models.OneToOneField(
-        Contribution,
+    submission = models.OneToOneField(
+        Submission,
         on_delete=models.CASCADE,
         primary_key=True,
         related_name="recycle_bin_entry",
@@ -289,22 +289,22 @@ class ContributionRecycleBin(models.Model):
     archived_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
-        related_name="contributions_archived",
+        related_name="submissions_archived",
     )
     archived_at = models.DateTimeField(auto_now_add=True)
     reason = models.TextField(blank=True, default="")
 
     class Meta:
-        db_table = "contribution_recycle_bin"
-        verbose_name = "Archived Contribution"
-        verbose_name_plural = "Archived Contributions"
+        db_table = "submission_recycle_bin"
+        verbose_name = "Archived Submission"
+        verbose_name_plural = "Archived Submissions"
         ordering = ["-archived_at"]
         indexes = [
             models.Index(fields=["archived_at"]),
         ]
 
     def __str__(self):
-        return f"Contribution #{self.contribution_id} archived at {self.archived_at}"
+        return f"Submission #{self.submission_id} archived at {self.archived_at}"
 
 
 class SubmissionTransaction(models.Model):
@@ -312,7 +312,7 @@ class SubmissionTransaction(models.Model):
     ACTION_SUBMIT = "submit"
     ACTION_EDIT_SUBMISSION = "edit_submission"
     # Retained for historical log rows; no longer written after the
-    # editor inline-edit form was removed from ContributionDetail.
+    # editor inline-edit form was removed from SubmissionDetail.
     ACTION_EDITOR_EDIT = "editor_edit"
     ACTION_APPROVE = "approve"
     ACTION_REJECT = "reject"
@@ -326,7 +326,7 @@ class SubmissionTransaction(models.Model):
     #   MARKING_REMOVED -- a marking was soft-removed into the recycle bin
     #   MARKING_RESTORED-- a marking was restored from the recycle bin
     ACTION_DRAFT_DELETED = "draft_deleted"
-    ACTION_CONTRIBUTION_SUPERSEDED = "contribution_superseded"
+    ACTION_SUBMISSION_SUPERSEDED = "submission_superseded"
     ACTION_MARKING_REMOVED = "marking_removed"
     ACTION_MARKING_RESTORED = "marking_restored"
     # Cover deletion-model actions, mirroring the marking recycle bin
@@ -335,11 +335,11 @@ class SubmissionTransaction(models.Model):
     #   COVER_RESTORED -- a cover was restored from the recycle bin
     ACTION_COVER_REMOVED = "cover_removed"
     ACTION_COVER_RESTORED = "cover_restored"
-    # Editor dashboard housekeeping (see ContributionRecycleBin):
-    #   CONTRIBUTION_ARCHIVED  -- a reviewed contribution was cleared off the queue
-    #   CONTRIBUTION_RESTORED  -- ... and put back
-    ACTION_CONTRIBUTION_ARCHIVED = "contribution_archived"
-    ACTION_CONTRIBUTION_RESTORED = "contribution_restored"
+    # Editor dashboard housekeeping (see SubmissionRecycleBin):
+    #   SUBMISSION_ARCHIVED  -- a reviewed submission was cleared off the queue
+    #   SUBMISSION_RESTORED  -- ... and put back
+    ACTION_SUBMISSION_ARCHIVED = "submission_archived"
+    ACTION_SUBMISSION_RESTORED = "submission_restored"
     # One DateSeen row added / changed / removed through /dates-seen/
     # (issues.md 107). These used to be logged as record_create/update/delete,
     # so the changelog read "Record deleted by ..." for a removed date.
@@ -371,13 +371,13 @@ class SubmissionTransaction(models.Model):
         (ACTION_RECORD_UPDATE, "Record updated"),
         (ACTION_RECORD_DELETE, "Record deleted"),
         (ACTION_DRAFT_DELETED, "Draft deleted"),
-        (ACTION_CONTRIBUTION_SUPERSEDED, "Contribution superseded"),
+        (ACTION_SUBMISSION_SUPERSEDED, "Submission superseded"),
         (ACTION_MARKING_REMOVED, "Marking removed"),
         (ACTION_MARKING_RESTORED, "Marking restored"),
         (ACTION_COVER_REMOVED, "Cover removed"),
         (ACTION_COVER_RESTORED, "Cover restored"),
-        (ACTION_CONTRIBUTION_ARCHIVED, "Contribution archived"),
-        (ACTION_CONTRIBUTION_RESTORED, "Contribution restored"),
+        (ACTION_SUBMISSION_ARCHIVED, "Submission archived"),
+        (ACTION_SUBMISSION_RESTORED, "Submission restored"),
         (ACTION_DATE_SEEN_ADDED, "Date added"),
         (ACTION_DATE_SEEN_CHANGED, "Date changed"),
         (ACTION_DATE_SEEN_REMOVED, "Date removed"),
@@ -408,8 +408,8 @@ class SubmissionTransaction(models.Model):
         related_name="submission_transactions",
     )
     action = models.CharField(max_length=40, choices=ACTION_CHOICES)
-    contribution = models.ForeignKey(
-        Contribution,
+    submission = models.ForeignKey(
+        Submission,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -446,7 +446,7 @@ class SubmissionTransaction(models.Model):
         indexes = [
             models.Index(fields=["marking", "created_at"]),
             models.Index(fields=["cover", "created_at"]),
-            models.Index(fields=["contribution", "created_at"]),
+            models.Index(fields=["submission", "created_at"]),
             models.Index(fields=["actor", "created_at"]),
             models.Index(fields=["action", "created_at"]),
         ]
@@ -703,7 +703,7 @@ class Postcover(TimestampedModel):
 class Collection(TimestampedModel):
     """
     An institutional collection -- a curatorial unit that wraps exactly one Region
-    and has many Editor assignments. Contributions are routed to a Collection
+    and has many Editor assignments. Submissions are routed to a Collection
     based on the state submitted; only Editors assigned to that Collection
     (or a superuser/Administrator) may review them.
     """
@@ -753,7 +753,7 @@ class CollectionAssignment(TimestampedModel):
     def save(self, *args, **kwargs):
         """
         On assignment, ensure the user is in the Editors group so that group-level
-        permissions (review_contribution, catalog write access, etc.) are granted
+        permissions (review_submission, catalog write access, etc.) are granted
         immediately. Removal is intentionally NOT auto-demoted -- admins explicitly
         remove from Editors group via the user admin if they want to revoke perms.
         """
@@ -1639,3 +1639,28 @@ class Citation(TimestampedModel):
 
     def __str__(self):
         return f'{self.reference_work} -> {self.subject_type} #{self.subject_id}'
+
+
+class CatalogSourceItem(models.Model):
+    """One source item and its reviewed destination. Keep the original evidence."""
+
+    reference_work = models.ForeignKey(ReferenceWork, on_delete=models.PROTECT)
+    kind = models.CharField(max_length=12)
+    source_key = models.CharField(max_length=80)
+    evidence = models.JSONField(default=dict)
+    decision = models.JSONField(default=dict)
+    submission = models.OneToOneField(
+        Submission, null=True, on_delete=models.SET_NULL, related_name="catalog_source"
+    )
+    post_office = models.ForeignKey(PostOffice, null=True, on_delete=models.SET_NULL)
+    marking = models.ForeignKey(Marking, null=True, on_delete=models.SET_NULL)
+    cover = models.ForeignKey(Cover, null=True, on_delete=models.SET_NULL)
+    applied = models.BooleanField(default=False)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["reference_work", "kind", "source_key"],
+                name="catalog_source_item_unique",
+            )
+        ]

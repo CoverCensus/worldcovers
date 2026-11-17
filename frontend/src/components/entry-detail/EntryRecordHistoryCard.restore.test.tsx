@@ -14,7 +14,7 @@ const event = (overrides: Partial<MarkingChangelogEvent>): MarkingChangelogEvent
   actor: "editor",
   actor_email: "editor@example.com",
   source: "editor_portal",
-  contribution_id: null,
+  submission_id: null,
   version_no: 2,
   summary: "Approved by editor",
   diff: [],

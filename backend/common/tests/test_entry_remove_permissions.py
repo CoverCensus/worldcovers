@@ -34,7 +34,7 @@ class EntryRemovePermissionTests(TestCase):
         )
         editors = Group.objects.create(name="Editors")
         editors.permissions.add(
-            Permission.objects.get(codename="review_contribution")
+            Permission.objects.get(codename="review_submission")
         )
         self.editor.groups.add(editors)
 

@@ -1,143 +1,208 @@
 ---
 name: worldcovers-sync-plan
-description: Review the current WorldCovers repo against README.md and ISSUE.md, then compare its Trello board and produce ordered documentation and board update plans. Use for WorldCovers status reconciliation or requests to keep the repo, docs, and Trello in sync.
+description: Review WorldCovers code and tests against design, README.md, ISSUE.md, and DECISIONS.md, then reconcile the evidence with live Trello. Use for project status, implementation planning, or code/document drift. Produce one linked correction plan; apply only changes authorized in the current task.
 ---
 
 # WorldCovers Sync Plan
 
-Produce two linked plans: first reconcile repo documentation with current
-evidence, then reconcile Trello with that evidence and the proposed doc changes.
-This is a review workflow. Do not edit project files, mutate Trello, commit,
-push, deploy, import data, or send messages merely because this skill is invoked.
-If the user separately requests implementation, apply only the authorized plan
-and recheck the affected state before writes. An earlier session's approval is
-not standing approval for future sync runs.
+Keep code evidence, project documents, and Trello consistent through one
+workflow. Code and tests show implementation; design and recorded project decisions
+define intended behavior. README.md explains use, ISSUE.md records remaining
+work and acceptance, DECISIONS.md holds practical rules, and Trello shows the
+live work board. Report conflicts instead of making one source silently
+override another.
 
-## Establish the review baseline
+Invocation produces a review plan. It does not authorize file edits, board
+writes, application changes, data operations, deployment, or Git actions.
+Creating or updating this skill does not run a sync. If implementation or
+application of the plan is already authorized, continue within that scope;
+do not ask again for the same approval. File and board changes may share one
+approved plan, but approval for one does not imply approval for the other.
+Follow AGENTS.md for separate Git permissions. Requests to plan, review, or
+audit remain read-only in every Codex mode.
 
-- Use the current WorldCovers checkout. Find its root with
-  `git rev-parse --show-toplevel` and confirm the expected remote is
-  `CoverCensus/worldcovers`. Resolve project paths from that root.
-- Read applicable AGENTS.md instructions, README.md, ISSUE.md,
-  docs/vision.md, and docs/devel/design.md. Follow links selectively when a
-  claim needs support. Keep generated text and artifacts ASCII-only.
-- Record the branch, full HEAD, dirty files, upstream, and review date.
-  Read relevant staged and unstaged diffs. Preserve all existing changes.
-  Separate working-tree behavior from committed behavior.
-- Check published GitHub state through read-only tools. Local remote-tracking
-  refs can be stale. Identify any unpublished commits before making links.
-  Use a verified published commit for evidence URLs and name local-only changes
-  separately. Use blob URLs for files and tree URLs for directories.
-  Do not push to make a link work. If remote access fails, state the limit.
-- Read recent and relevant PRs, including open work and follow-up notes.
-  Local PR summaries and previous audit reports are dated aids, not current
-  inventories. Do not require a past `/tmp` report or a fixed commit hash.
+## Choose the scope and establish the baseline
 
-## Plan the documentation updates
+- Use the current checkout. Find its root with `git rev-parse --show-toplevel`
+  and confirm that its remote identifies `CoverCensus/worldcovers`.
+- Read AGENTS.md, README.md, ISSUE.md, DECISIONS.md, docs/vision.md,
+  docs/glossary.md, docs/devel/model.md, and docs/devel/design.md. Read the
+  relevant local context in .codex/README.md when present. Follow links only
+  as needed for the affected claims.
+- For a named change, review its affected rules, requirements, and cards.
+  Reuse current-session evidence that is still valid. A full sync also checks
+  all active ISSUE.md items and DECISIONS.md rules. State what was not checked;
+  do not turn each small edit into another full audit.
+- Record the review date, branch, full HEAD, upstream, and relevant dirty
+  files. Inspect staged and unstaged diffs and preserve existing work.
+  Distinguish working-tree behavior from committed behavior.
+- Use the GitHub CLI (`gh`) to verify published revisions and relevant open
+  or recent PRs. Remote-tracking refs and local PR summaries can be stale.
+  Use published blob/tree links only for verified revisions; use local links
+  for unpublished work. Do not push merely to make an evidence link work.
+- Private notes, historical workspaces, and archives can be absent. Follow
+  AGENTS.md when history matters; report gaps without recreating or publishing
+  private files. Do not use an old audit or temporary report as a live inventory.
+- Follow dependencies into bodger when the affected extraction work lives
+  there. Keep WorldCovers application behavior, offline tooling, source-data
+  coverage, and hosted operations distinct.
 
-Check claims against the implementation, not just another document. Use routes,
-permissions, models, command entrypoints, tests, CI workflows, deployment files,
-and relevant PR evidence. Follow the code far enough to verify the stated
-capability; a matching filename or symbol alone is insufficient.
+## Read the affected Trello work
 
-- For README.md, check setup commands, dependencies, database versions by
-  environment, architecture, user flows, verification, deployment, and links.
-  Derive current versions from code/configuration. Do not repeat old versions
-  from this skill or a past chat.
-- For ISSUE.md, review active statuses, unresolved checklists, decisions,
-  dependencies, and the feature implementation table. Check later fixes and
-  PR follow-ups before proposing new work. Preserve historical snapshots as
-  history and keep original numbering.
-- Keep Original Issue N, MD/MI Batch #N, Reese queue #N, Trello S#/T#/F#,
-  and GitHub PR #N distinct. Match by scope and evidence, never by bare number.
-- Design and vision define intended scope; code establishes implementation.
-  If they differ, identify the missing capability or decision. Do not silently
-  reduce a requirement to match the current implementation.
-- Distinguish SPA, API, Django admin, and operator tooling. A CLI command does
-  not satisfy a requirement for an application interface. Conversely, an API
-  can implement a capability even if the SPA lacks a management screen.
-- Record implementation, passing checks, deployment, data coverage, and
-  stakeholder acceptance separately. A merged PR proves none of the latter
-  by itself. Name the site and date for operational or data evidence.
-- Missing historical workspace files do not imply a broken checkout. Do not
-  propose recreating them just to satisfy references. When provenance matters,
-  use available archive instructions in AGENTS.md and search only relevant
-  history. Private notes and archives are optional and may be absent in a
-  fresh clone. Report evidence gaps; do not recreate or publish private files.
+The expected board is WorldCovers in the Cover Census workspace:
+https://trello.com/b/HDC2qwhi/worldcovers. Verify its identity, policy, lists,
+and labels. Read affected cards, checklists, and relevant activity. Follow
+pagination and truncation flags. A focused review needs the relevant scope,
+not every card on the board.
 
-Build a small evidence table: document section/source ID, current claim,
-observed state, evidence, and exact proposed correction or remaining question.
-Propose the smallest wording/status changes. Do not turn ISSUE.md into a full
-PR history or add a new permanent status document. Refer to related docs only
-where needed to explain or fix a contradiction.
+Reuse a current-session board read when still valid. If Trello is unavailable,
+continue the local review and mark the board comparison pending/unverified.
+Do not substitute a dated snapshot or require a board connection for local work.
 
-## Plan the Trello updates
-
-Discover the current Trello read tools. The expected board is WorldCovers in
-the Cover Census workspace, at https://trello.com/b/HDC2qwhi/worldcovers.
-Verify that identity and read its policy, lists, labels, and cards. Read relevant
-checklists and activity. Follow pagination and truncation flags. Include archived
-cards when checking prior work, duplicates, and the highest used T number;
-do not assume a board call includes cards in archived lists.
-
-Compare live cards with repo evidence and the proposed documentation corrections.
-If Trello is unavailable, finish the repo/doc plan and mark the board comparison
-blocked. Do not substitute a previous board snapshot for the live inventory.
-
-Apply these agreed meanings unless the user changes them. If the live policy
-differs, report it and propose the policy correction rather than silently
-changing scope:
+Use these meanings unless the user changes them. If the live policy differs,
+report the conflict and propose a correction:
 
 - Backlog: deferred requirements.
 - To Do: active implementation, investigation, or decisions remaining.
 - Doing: work confirmed as currently underway.
 - Testing: implemented work awaiting verification or stakeholder acceptance.
-- Done: accepted work. Preserve existing Done status unless evidence contradicts
-  the requirement; absence of an old acceptance note alone is not a reason to
-  reopen it.
+- Done: accepted work. Preserve existing Done status unless evidence
+  contradicts the requirement; a missing old acceptance note is not enough
+  to reopen it.
 
-Keep original card URLs, S#/T# identifiers, descriptions, and assignments.
-Use the design's F# map. Group overlapping feedback into one distinct outcome
-and cross-link related cards. Add only missing current work; link completed PRs
-as evidence rather than creating a historical backfill.
+Preserve original card URLs, identifiers, descriptions, and assignments.
+Do not infer owners or deadlines from old notes. Apply board membership and
+assignment rules from the live policy when proposing a move.
 
-For each proposed card change, give the card ID/URL, current and target list,
-title/description changes, feature labels, evidence, and acceptance criteria.
-For new tasks, propose unused T numbers after the highest active or archived
-number. Record a source-to-card mapping for every unresolved issue or batch item,
-or an evidence-based reason that no new card is needed.
+## Check claims against code and tests
 
-For data checks, identify source records, target site, expected result, and
-whether current coverage is known. If record IDs or the target are unknown,
-make finding them the first task step; do not invent them. Do not schedule
-repeat imports from stale checklists. Treat owner decisions as decisions, not
-missing code. Do not infer current assignments or deadlines from old notes.
+Trace the relevant route, permission, model, helper, command, and test far
+enough to establish behavior. A matching filename, symbol, comment, or test
+count is not proof. Reading tests is not running them. Record missing test
+coverage instead of inventing it. Use recent history when a claim may predate
+a fix or follow-up.
 
-Propose archiving only verified duplicates after checking for unique content.
-Preserve original cards and recoverable history. Do not assume duplicates still
-exist because an earlier audit found them. List position and the card's separate
-completion flag must agree; include both in proposed reopen operations. Fit
-planned writes to the connector's supported fields and limits, and flag any
-required operation it does not expose.
+- Separate implementation, passing checks, deployment, source coverage, and
+  stakeholder acceptance. A merged PR establishes none of the latter by
+  itself. Name the site, revision, and date for operational evidence.
+- Keep API, web interface, Django admin, and operator tooling distinct. A CLI
+  command does not fulfill a requirement for an application interface; an API
+  can implement a capability without a matching SPA management screen.
+- If code follows an established decision and prose is old, propose corrected
+  prose. If code falls short of design, retain the requirement and identify
+  the existing issue or a missing gap. Do not turn a defect into a rule to keep.
+- If intent or sources conflict, state the precise decision needed. Continue
+  independent corrections without inventing a product decision. Do not change
+  application behavior, restore old behavior, or weaken design merely to make
+  documents agree.
+- If evidence and documents already agree, propose no edit. Do not refresh
+  dates or rewrite sound rules just to show that a review ran.
 
-## Deliver the linked plan
+Keep Original Issue N, MD/MI Batch #N, Trello S#/T#/F#,
+and GitHub PR #N distinct. Match by scope and evidence, never by bare number.
 
-Lead with the review baseline and the material drift found. Then present:
+## Build one linked correction plan
 
-1. Documentation plan: specific README.md and ISSUE.md corrections with evidence.
-2. Trello plan: exact updates, moves, new tasks, policy changes, or archives,
-   including the source-to-card mapping and dependencies on the doc corrections.
-3. Open questions and verification: distinguish blocked evidence from product
-   decisions; explain how each proposed change will be checked.
+Use a small evidence table: document section or source ID, current claim,
+observed state, evidence, and exact proposed correction or remaining question.
+Include only affected changes and their dependencies.
 
-Make the plan concrete enough to apply without another discovery pass. Ask only
-for decisions that cannot be resolved from available evidence. Use the required
-plan format when running in Plan Mode. A saved report is optional; use an
-untracked output location and keep it dated instead of creating a second queue.
+### README.md and related guides
 
-For later authorized execution, re-read changed docs and cards before writes,
-preserve concurrent edits, and check uncertain write outcomes before retrying.
-Verify source links, unique active identifiers, labels, completion flags,
-assignments, and source coverage after changes. Use ASCII and diff checks for
-doc-only edits; do not run application tests or live data operations just to
-complete a status review.
+Check affected setup commands, dependencies, database versions by environment,
+architecture, user flows, verification, deployment, and links against current
+code/configuration. Derive versions from those sources. Correct related guides
+only within the authorized scope; flag other needed changes separately.
+
+### ISSUE.md
+
+ISSUE.md lists open work only. Follow "Rules For This File" at its top.
+
+- Reuse the matching row (issue, batch item, S story, or T task). Keep the
+  original numbering.
+- Each row states what remains and when it is done. Nothing else.
+- When work is accepted, delete its row. Do not leave a closure note.
+- Never add dated review logs, baselines, commit hashes, test counts,
+  deploy results, or developer names. Put that evidence on the Trello card.
+- If finished work produced a lasting rule, add it to DECISIONS.md.
+
+Do not change assignment, priority, or board status based on code alone. If a
+requirement has no matching item, propose a short gap with evidence, required
+outcome or decision, and checkable acceptance criteria. Reuse that gap on later
+runs. Mark it as needing Trello mapping until live numbering is checked.
+
+### DECISIONS.md
+
+Keep practical rules that prevent a wrong change. Use plain American English,
+the project's exact terms, and this structure for affected rules:
+
+- **Do:** the behavior to preserve, with the Entry type and operation.
+- **Don't:** a concrete mistake to avoid, including essential exceptions.
+- **Why:** the practical consequence in one or two sentences.
+- **Evidence:** relevant design, implementation, and existing test links.
+- **Open work:** exact ISSUE.md references for unfinished requirements or
+  known gaps, distinguishing directly tracked work from related work.
+
+Do not add a rule for every fix, repeat the feature inventory, or copy test
+totals and status reports. State the checked scope and implementation limits;
+do not claim a safeguard covers every endpoint unless verified. Remove
+superseded rules. Keep VPHC source-specific rules and postmaster history in
+the existing VPHC documents, including bodger references when relevant.
+Treat historical Regions as wider than the implemented VA/WV exception.
+Do not alter design or glossary to hide a conflict.
+
+### Trello
+
+Map every unresolved in-scope source item to an existing card or give an
+evidence-based reason no card is needed. Use the design's F# map. Group
+overlapping feedback by distinct outcome and cross-link related work.
+Link completed PRs as evidence instead of creating historical backfill.
+
+For each proposed change, give the card ID/URL, current and target list,
+exact title/description changes, labels, evidence, and acceptance criteria.
+Keep descriptions concise; do not duplicate assignments and labels in prose.
+
+Before proposing a new T number, check active and archived cards, including
+cards in archived lists, for duplicates and the highest used number. Do not
+assume a board call includes archived lists. Propose archiving only verified
+duplicates after checking for unique content. Preserve recoverable history.
+For a reopen, align list position and the separate completion flag.
+
+For data tasks, identify source records, target site, expected result, and
+known coverage. If records or the target are unknown, finding them is the
+first task step. Do not schedule repeat imports from stale checklists or
+describe an owner decision as missing code.
+
+Fit proposed writes to supported connector fields and limits. Flag operations
+the available tools cannot perform instead of claiming them complete.
+
+## Deliver, apply when authorized, and verify
+
+Present one plan containing the baseline and material drift, exact local
+corrections, dependent board changes, unresolved decisions, evidence limits,
+and verification steps. Distinguish proposals from applied changes. Use the
+required proposed_plan format in Plan Mode. The response is the handoff;
+save a note under .codex/ only when the user requests one.
+
+For an authorized application of the plan:
+
+1. Re-read affected files and cards before writes. Preserve concurrent edits
+   and patch only approved paragraphs. Finish independent authorized changes
+   when new drift appears; report the additional scope separately.
+2. Apply local corrections and check ASCII, the diff, links, and anchors.
+   Each corrected claim needs evidence; each gap needs an issue/card mapping
+   or an explicit pending mapping. Check that another run would not duplicate
+   issues or rewrite unchanged rules. Do not run an application suite just
+   for prose; use focused checks only when needed to settle a material claim.
+3. Compare the actual local changes with Trello in a focused final pass.
+   Reuse unchanged evidence rather than repeating the full audit. Apply only
+   board changes authorized in the current task. A local doc edit alone does
+   not establish that Trello is synced.
+4. Verify applied card fields, URLs, unique active identifiers, labels,
+   completion flags, assignments, and source coverage. Check uncertain write
+   outcomes before retrying. Respect existing notification requirements and
+   separate authorization for comments or other messages.
+
+Report what was reviewed, proposed, applied, or left pending. Do not claim
+deployment, acceptance, or Done status from a documentation correction,
+commit, push, or successful import alone.

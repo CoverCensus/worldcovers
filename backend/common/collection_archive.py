@@ -31,15 +31,15 @@ from common.management.commands.verify_media_integrity import _sha256
 SCHEMA = "worldcovers.collection_backup.v1"
 MODEL_NAMES = (
     "collection", "region", "postoffice", "postofficeregion", "postmaster",
-    "postmastertenure", "marking", "cover", "covermarking", "contribution",
-    "contributionrecyclebin", "submissiontransaction", "markingversion",
+    "postmastertenure", "marking", "cover", "covermarking", "submission",
+    "submissionrecyclebin", "submissiontransaction", "markingversion",
     "coverversion", "markingrecyclebin", "coverrecyclebin", "image",
     "dateseen", "citation", "covervaluation", "referencework", "color",
-    "shape", "lettering",
+    "shape", "lettering", "catalogsourceitem",
 )
 MODELS = {f"common.{name}": apps.get_model("common", name) for name in MODEL_NAMES}
 MODELS.update({"reversion.revision": Revision, "reversion.version": Version})
-ENTRY_MODELS = {"common.marking", "common.cover", "common.contribution"}
+ENTRY_MODELS = {"common.marking", "common.cover", "common.submission"}
 JSON_REFS = {
     "marking_id": "marking", "parent_marking_id": "marking",
     "edit_marking_id": "marking", "marking": "marking",
@@ -52,15 +52,15 @@ JSON_REFS = {
     "source_marking_image_id": "image", "image_id": "image",
     "cropped_from": "image", "cropped_from_id": "image",
     "cover_marking_id": "covermarking", "edit_cover_marking_id": "covermarking",
-    "contribution_id": "contribution",
-    "archived_contribution_id": "contribution",
-    "restored_contribution_id": "contribution",
+    "submission_id": "submission",
+    "archived_submission_id": "submission",
+    "restored_submission_id": "submission",
     "parentMarkingId": "marking", "markingId": "marking",
     "editMarkingId": "marking", "coverId": "cover", "regionId": "region",
     "editCoverMarkingId": "covermarking", "referenceWorkId": "referencework",
-    "edit_contribution_id": "contribution", "editContributionId": "contribution",
+    "edit_submission_id": "submission", "editSubmissionId": "submission",
     "date_seen_id": "dateseen", "deleted_cover_marking_id": "covermarking",
-    "deleted_contribution_id": "contribution",
+    "deleted_submission_id": "submission",
 }
 JSON_REF_LISTS = {name: "referencework" for name in (
     "reference_work_ids", "referenceWorkIds", "reference_work_ids[]",
@@ -175,26 +175,33 @@ def collection_scope(collection: catalog.Collection) -> dict[str, set[int]]:
         regions.update(children)
     offices = set(catalog.PostOfficeRegion.objects.filter(region_id__in=regions).values_list("post_office_id", flat=True))
     markings = set(catalog.Marking.all_objects.filter(post_office_id__in=offices).values_list("pk", flat=True))
-    contributions = set(catalog.Contribution.objects.filter(collection=collection).values_list("pk", flat=True))
-    markings.update(catalog.Contribution.objects.filter(pk__in=contributions).exclude(marking=None).values_list("marking_id", flat=True))
+    submissions = set(catalog.Submission.objects.filter(collection=collection).values_list("pk", flat=True))
+    markings.update(catalog.Submission.objects.filter(pk__in=submissions).exclude(marking=None).values_list("marking_id", flat=True))
     offices.update(catalog.Marking.all_objects.filter(pk__in=markings).values_list("post_office_id", flat=True))
     covers = set(catalog.CoverMarking.objects.filter(marking_id__in=markings).values_list("cover_id", flat=True))
-    # Pending Cover submissions can have no Contribution.marking or saved link.
-    for row in catalog.Contribution.objects.all():
+    # Pending Cover submissions can have no Submission.marking or saved link.
+    for row in catalog.Submission.objects.all():
         data = row.submitted_data or {}
         if not isinstance(data, dict):
             continue
         targets = {int(data[name]) for name, kind in JSON_REFS.items()
                    if kind == "marking" and str(data.get(name, "")).isdigit()}
-        if row.pk in contributions or targets & markings or row.marking_id in markings:
+        if row.pk in submissions or targets & markings or row.marking_id in markings:
             if row.collection_id != collection.pk:
                 continue
-            contributions.add(row.pk)
+            submissions.add(row.pk)
             for name, kind in JSON_REFS.items():
                 if kind == "cover" and str(data.get(name, "")).isdigit():
                     covers.add(int(data[name]))
     return {"regions": regions, "post_offices": offices, "markings": markings,
-            "covers": covers, "contributions": contributions}
+            "covers": covers, "submissions": submissions}
+
+
+def source_items_for(offices, markings, covers, submissions):
+    return catalog.CatalogSourceItem.objects.filter(
+        Q(post_office_id__in=offices) | Q(marking_id__in=markings)
+        | Q(cover_id__in=covers) | Q(submission_id__in=submissions)
+    )
 
 
 class GraphExporter:
@@ -208,7 +215,7 @@ class GraphExporter:
         self.owned = {
             "common.marking": self.scope["markings"],
             "common.cover": self.scope["covers"],
-            "common.contribution": self.scope["contributions"],
+            "common.submission": self.scope["submissions"],
         }
 
     def reference(self, label: str, pk: Any, external: bool = False) -> dict[str, str]:
@@ -225,14 +232,15 @@ class GraphExporter:
     def seed(self) -> None:
         s = self.scope
         self.reference("common.collection", self.collection.pk)
+        self.add(source_items_for(s["post_offices"], s["markings"], s["covers"], s["submissions"]))
         self.add(catalog.PostOffice.objects.filter(pk__in=s["post_offices"]))
         self.add(catalog.PostOfficeRegion.objects.filter(post_office_id__in=s["post_offices"]))
         self.add(catalog.PostmasterTenure.objects.filter(post_office_id__in=s["post_offices"]))
         self.add(catalog.Marking.all_objects.filter(pk__in=s["markings"]))
         self.add(catalog.Cover.all_objects.filter(pk__in=s["covers"]))
-        self.add(catalog.Contribution.objects.filter(pk__in=s["contributions"]))
-        self.add(catalog.Contribution.objects.filter(marking_id__in=s["markings"]))
-        self.add(catalog.ContributionRecycleBin.objects.filter(contribution_id__in=s["contributions"]))
+        self.add(catalog.Submission.objects.filter(pk__in=s["submissions"]))
+        self.add(catalog.Submission.objects.filter(marking_id__in=s["markings"]))
+        self.add(catalog.SubmissionRecycleBin.objects.filter(submission_id__in=s["submissions"]))
         self.add(catalog.CoverMarking.objects.filter(cover_id__in=s["covers"]))
         for model, field, ids in (
             (catalog.MarkingVersion, "marking_id", s["markings"]),
@@ -247,7 +255,7 @@ class GraphExporter:
             self.add(model.objects.filter(subject))
         self.add(catalog.SubmissionTransaction.objects.filter(
             Q(marking_id__in=s["markings"]) | Q(cover_id__in=s["covers"])
-            | Q(contribution_id__in=s["contributions"]),
+            | Q(submission_id__in=s["submissions"]),
         ))
 
     def history_reference(self, label: str, pk: Any) -> dict[str, Any]:
@@ -293,8 +301,16 @@ class GraphExporter:
                 label = f"common.{str(values['subject_type']).lower()}"
                 value = self.reference(label, value)
             elif isinstance(field, models.JSONField):
-                reference = self.reference if model is catalog.Contribution else self.history_reference
-                value = walk_json(value, reference)
+                reference = self.reference if model is catalog.Submission else self.history_reference
+                # Keep codes in the original source evidence verbatim.
+                if not (model is catalog.CatalogSourceItem and field.name == "evidence"):
+                    value = walk_json(value, reference)
+                if model is catalog.CatalogSourceItem and field.name == "decision":
+                    label = "common." + {"OFFICE": "postoffice", "MARKING": "marking", "COVER": "cover"}[values["kind"]]
+                    if isinstance(value.get("target"), int):
+                        value["target"] = self.history_reference(label, value["target"])
+                    value["candidates"] = [self.history_reference(label, pk) if isinstance(pk, int) else pk
+                                           for pk in value["candidates"]]
             result[field.name] = value
         if model is Version:
             label = ContentType.objects.get(pk=values["content_type"]).model_class()._meta.label_lower

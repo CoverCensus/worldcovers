@@ -8,6 +8,8 @@ grouped public wrapper at './woco ascc', including './woco ascc import'
 for import_ascc_bundle and './woco ascc drop' for drop_ascc_state. The
 data-deploy scripts are exposed as './woco push', './woco refresh', and
 './woco reload'.
+'./woco bodger TOOL [args]' runs an optional extraction tool in bodger's
+own environment. Base Django commands do not require bodger.
 './woco secretkey' prints a fresh DJANGO_SECRET_KEY value; it runs before
 Django settings load, so it works on a fresh clone that has no .env yet.
 './woco setup dev' and './woco setup prod' run the one-command environment
@@ -19,6 +21,10 @@ import sys
 
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
+    if len(sys.argv) > 1 and sys.argv[1] == "bodger":
+        sys.path.insert(0, os.path.join(here, "tools"))
+        from bodger_tools import main as bodger_main
+        raise SystemExit(bodger_main(sys.argv[2:]))
     if len(sys.argv) > 1 and sys.argv[1] == "ascc":
         sys.path.insert(0, os.path.join(here, "tools"))
         from ascc_cli import main as ascc_main

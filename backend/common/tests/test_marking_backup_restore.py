@@ -16,7 +16,7 @@ from common.models import (
     Collection,
     CollectionAssignment,
     Color,
-    Contribution,
+    Submission,
     Cover,
     CoverMarking,
     DateSeen,
@@ -158,7 +158,7 @@ class MarkingBackupRestoreCommandTests(TestCase):
             created_by=self.contributor,
             modified_by=self.contributor,
         )
-        self.contribution = Contribution.objects.create(
+        self.submission = Submission.objects.create(
             contributor=self.contributor,
             marking=self.marking,
             collection=self.collection,
@@ -168,7 +168,7 @@ class MarkingBackupRestoreCommandTests(TestCase):
                 "town": "Richmond",
                 "catalog_code": self.marking.code,
             },
-            status=Contribution.STATUS_APPROVED,
+            status=Submission.STATUS_APPROVED,
             reviewer=self.editor,
             review_notes="Approved.",
             created_by=self.contributor,
@@ -178,7 +178,7 @@ class MarkingBackupRestoreCommandTests(TestCase):
             transaction_uuid=uuid4(),
             actor=self.editor,
             action=SubmissionTransaction.ACTION_APPROVE,
-            contribution=self.contribution,
+            submission=self.submission,
             marking=self.marking,
             source=SubmissionTransaction.SOURCE_EDITOR_PORTAL,
             before_payload={},
@@ -231,41 +231,41 @@ class MarkingBackupRestoreCommandTests(TestCase):
 
         datasets = payload["datasets"]
         self.assertEqual(len(datasets["markings"]["rows"]), 1)
-        self.assertEqual(len(datasets["contributions"]["rows"]), 1)
+        self.assertEqual(len(datasets["submissions"]["rows"]), 1)
         self.assertEqual(len(datasets["submission_transactions"]["rows"]), 1)
         self.assertEqual(len(datasets["marking_versions"]["rows"]), 1)
         self.assertEqual(len(datasets["images"]["rows"]), 1)
         self.assertEqual(len(datasets["citations"]["rows"]), 1)
         self.assertEqual(len(datasets["dates_seen"]["rows"]), 1)
 
-        contribution = datasets["contributions"]["rows"][0]
-        self.assertEqual(contribution["contributor"], self.contributor.username)
-        self.assertEqual(contribution["status"], Contribution.STATUS_APPROVED)
-        self.assertEqual(contribution["marking_code"], self.marking.code)
+        submission = datasets["submissions"]["rows"][0]
+        self.assertEqual(submission["contributor"], self.contributor.username)
+        self.assertEqual(submission["status"], Submission.STATUS_APPROVED)
+        self.assertEqual(submission["marking_code"], self.marking.code)
 
     def test_restore_marking_restores_dashboard_and_history_rows(self):
         backup_path = self._backup()
         call_command("wipe_user_data", no_input=True, verbosity=0)
 
-        self.assertFalse(Contribution.objects.exists())
+        self.assertFalse(Submission.objects.exists())
         self.assertFalse(SubmissionTransaction.objects.exists())
         self.assertFalse(MarkingVersion.objects.exists())
 
         call_command("restore_marking", str(backup_path), verbosity=0)
 
-        restored = Contribution.objects.get(marking=self.marking)
+        restored = Submission.objects.get(marking=self.marking)
         self.assertEqual(restored.contributor, self.contributor)
-        self.assertEqual(restored.status, Contribution.STATUS_APPROVED)
+        self.assertEqual(restored.status, Submission.STATUS_APPROVED)
         self.assertEqual(restored.review_notes, "Approved.")
 
         client = APIClient()
         client.force_authenticate(self.contributor)
-        response = client.get("/api/v2/contributions/", format="json")
+        response = client.get("/api/v2/submissions/", format="json")
         self.assertEqual(response.status_code, 200, response.data)
         rows = response.data.get("results", response.data)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["id"], restored.pk)
-        self.assertEqual(rows[0]["status"], Contribution.STATUS_APPROVED)
+        self.assertEqual(rows[0]["status"], Submission.STATUS_APPROVED)
 
         client.force_authenticate(self.editor)
         history = client.get(
@@ -318,13 +318,13 @@ class MarkingBackupRestoreCommandTests(TestCase):
 
         call_command("restore_marking", str(backup_path), dry_run=True, verbosity=0)
 
-        self.assertFalse(Contribution.objects.exists())
+        self.assertFalse(Submission.objects.exists())
         self.assertFalse(SubmissionTransaction.objects.exists())
         self.assertFalse(MarkingVersion.objects.exists())
 
     def test_restore_marking_requires_local_contributor_user(self):
         payload = self._payload()
-        payload["datasets"]["contributions"]["rows"][0]["contributor"] = (
+        payload["datasets"]["submissions"]["rows"][0]["contributor"] = (
             "missing-user"
         )
         edited_path = self.tmp_path / "missing-user.json"
@@ -334,13 +334,13 @@ class MarkingBackupRestoreCommandTests(TestCase):
 
         with self.assertRaises(CommandError):
             call_command("restore_marking", str(edited_path), verbosity=0)
-        self.assertFalse(Contribution.objects.exists())
+        self.assertFalse(Submission.objects.exists())
 
     def test_restore_marking_maps_stale_collection_name_by_region(self):
         payload = self._payload()
         payload["datasets"]["collections"]["rows"][0]["name"] = "Virgin Islands"
         payload["datasets"]["collections"]["rows"][0]["region"] = "Virginia"
-        payload["datasets"]["contributions"]["rows"][0]["collection"] = (
+        payload["datasets"]["submissions"]["rows"][0]["collection"] = (
             "Virgin Islands"
         )
         edited_path = self.tmp_path / "stale-collection.json"
@@ -349,14 +349,14 @@ class MarkingBackupRestoreCommandTests(TestCase):
         call_command("wipe_user_data", no_input=True, verbosity=0)
         call_command("restore_marking", str(edited_path), verbosity=0)
 
-        restored = Contribution.objects.get(marking=self.marking)
+        restored = Submission.objects.get(marking=self.marking)
         self.assertEqual(restored.collection, self.collection)
         self.assertEqual(self.collection.name, "Virginia")
 
         client = APIClient()
         client.force_authenticate(self.virginia_editor)
         response = client.get(
-            "/api/v2/contributions/",
+            "/api/v2/submissions/",
             {"mode": "editor"},
             format="json",
         )
@@ -364,8 +364,8 @@ class MarkingBackupRestoreCommandTests(TestCase):
         rows = response.data.get("results", response.data)
         self.assertEqual([row["id"] for row in rows], [restored.pk])
 
-    def test_restore_marking_round_trips_pending_cover_contribution(self):
-        pending_cover = Contribution.objects.create(
+    def test_restore_marking_round_trips_pending_cover_submission(self):
+        pending_cover = Submission.objects.create(
             contributor=self.contributor,
             collection=self.collection,
             submitted_data={
@@ -391,13 +391,13 @@ class MarkingBackupRestoreCommandTests(TestCase):
                     }
                 ],
             },
-            status=Contribution.STATUS_PENDING,
+            status=Submission.STATUS_PENDING,
             created_by=self.contributor,
             modified_by=self.contributor,
         )
         backup_path = self._backup()
         payload = json.loads(backup_path.read_text(encoding="utf-8"))
-        rows = payload["datasets"]["contributions"]["rows"]
+        rows = payload["datasets"]["submissions"]["rows"]
         cover_row = next(
             row
             for row in rows
@@ -413,10 +413,10 @@ class MarkingBackupRestoreCommandTests(TestCase):
         call_command("wipe_user_data", no_input=True, verbosity=0)
         call_command("restore_marking", str(edited_path), verbosity=0)
 
-        restored = Contribution.objects.get(
+        restored = Submission.objects.get(
             submitted_data__catalog_code="ASCC1-VA-C0002",
         )
-        self.assertEqual(restored.status, Contribution.STATUS_PENDING)
+        self.assertEqual(restored.status, Submission.STATUS_PENDING)
         self.assertIsNone(restored.marking_id)
         self.assertEqual(
             restored.submitted_data["parent_marking_id"],
@@ -481,11 +481,11 @@ class MarkingBackupRestoreCommandTests(TestCase):
             transaction_uuid=transaction_uuid,
         )
         self.assertEqual(restored.marking.code, self.marking.code)
-        self.assertEqual(restored.contribution.marking.code, self.marking.code)
+        self.assertEqual(restored.submission.marking.code, self.marking.code)
 
     def _round_trip_counts(self):
         return {
-            "contributions": Contribution.objects.count(),
+            "submissions": Submission.objects.count(),
             "submission_transactions": SubmissionTransaction.objects.count(),
             "marking_versions": MarkingVersion.objects.count(),
             "dates_seen": DateSeen.objects.count(),

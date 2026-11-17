@@ -38,7 +38,7 @@ interface UseFilterOptionsOptions {
    * - "id" (default) -- Catalog Search sends it as `?shape=<id>` to
    *   MarkingListFilter.shape, a NumberFilter. A name there is an HTTP 400.
    * - "name" -- the dashboard queue matches `submitted_data.shape`, which
-   *   holds the Shape NAME verbatim ("C - Circle"). Contributions have no
+   *   holds the Shape NAME verbatim ("C - Circle"). Submissions have no
    *   shape FK to compare against.
    *
    * The queue's shape filter had never matched anything: it was handed ids and

@@ -130,7 +130,7 @@ const Collections = () => {
   };
 
   const onDelete = async (id: number, name: string) => {
-    if (!confirm(`Remove Collection "${name}"? Contributions referencing it will block removal.`)) {
+    if (!confirm(`Remove Collection "${name}"? Submissions referencing it will block removal.`)) {
       return;
     }
     try {
@@ -360,7 +360,7 @@ const Collections = () => {
                   </div>
                   <p className="text-xs text-muted-foreground mt-2">
                     The user is automatically added to the Editors group, granting review
-                    permissions for this Collection's contributions.
+                    permissions for this Collection's submissions.
                   </p>
                 </>
               )}

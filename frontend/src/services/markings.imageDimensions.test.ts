@@ -71,7 +71,7 @@ describe("image dimensions reach the client", () => {
   });
 
   it("reports a legacy row with no recorded dimensions as zero, not NaN", async () => {
-    // contribution_apply writes `int(meta.get("image_width") or 0)`, so rows
+    // submission_apply writes `int(meta.get("image_width") or 0)`, so rows
     // genuinely carry 0. classifyImageShape treats a non-positive dimension as
     // indeterminate, which is the right outcome: no prompt on unknown data.
     mockedGet.mockResolvedValue({

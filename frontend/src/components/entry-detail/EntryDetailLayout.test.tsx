@@ -25,6 +25,9 @@ describe("EntryDetailLayout", () => {
     );
 
     const back = screen.getByRole("button", { name: "Back" });
+    // Trello T95: the large size, so the control is easy to find.
+    expect(back.className).toContain("h-11");
+    expect(back.className).toContain("text-base");
     const title = screen.getByRole("heading", { name: "Cover", level: 1 });
     expect(title.className).toContain("text-[2.35rem]");
     expect(back.parentElement).toBe(title.parentElement);

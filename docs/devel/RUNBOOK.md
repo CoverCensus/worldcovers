@@ -4,8 +4,7 @@ Day-to-day commands for running WorldCovers on staging and production.
 
 Source of truth:
 
-- Staging deployment flow: `.github/workflows/build-and-deploy.yml`
-- Production deployment flow: `.github/workflows/deploy-prod.yml`
+- Deployment flow (manual, both hosts): `docs/devel/DEPLOY.md`, section Deploy Flow
 - App build steps: `deploy/deploy.sh`
 - Data refresh: `tools/reload_data.sh`
 - Service definition: `deploy/worldcovers.service`
@@ -163,7 +162,8 @@ and the S25/S26 application interfaces.
    database/media backup using [BACKUP.md](BACKUP.md). Run the same Collection
    dry-run, restore, verification, and page checks on the destination. Retain
    the exact bundle and its destination verification report off the source.
-6. Obtain Michael's acceptance before source removal. Take and verify a
+6. Obtain acceptance from the person who requested the transfer before source
+   removal. Take and verify a
    tagged full source backup. Copy the destination verification report back
    to the source. Resolve the Region code from the backed-up Collection and
    preview the guarded removal:
@@ -192,7 +192,7 @@ Snapshots are taken nightly by `worldcovers-backup.timer` and live under
 
 ```sh
 # health, without logging in
-ssh reese@<host> 'cat /var/backups/woco/STATUS.json'
+ssh <your-user>@<host> 'cat /var/backups/woco/STATUS.json'
 
 # on-demand snapshot before something destructive (no password needed)
 sudo -u wocod /usr/local/sbin/worldcovers-backup --tag pre-something

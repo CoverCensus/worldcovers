@@ -8,7 +8,7 @@ doubt, make it editor-only.
 
 Two halves, and both are pinned here:
 
-  * contribution_apply strips the markers on approval, and the contribution
+  * submission_apply strips the markers on approval, and the submission
     keeps the original text -- that is what makes the strip non-destructive.
   * MarkingDetailSerializer.vphc_provenance gives editors the doubt back, gated.
     That gate is the security surface of the change: the endpoint is AllowAny,
@@ -19,10 +19,10 @@ from django.contrib.auth.models import Group, Permission
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from common.contribution_apply import apply_contribution_to_catalog
+from common.submission_apply import apply_submission_to_catalog
 from common.models import (
     Collection,
-    Contribution,
+    Submission,
     Marking,
     PostOffice,
     PostOfficeRegion,
@@ -59,7 +59,7 @@ class VphcMarkerStripTests(TestCase):
             post_office=self.post_office, region=self.region,
             created_by=self.user, modified_by=self.user)
 
-    def _contribution(self, **payload):
+    def _submission(self, **payload):
         base = {
             "type": "TOWNMARK", "state": "VA", "town": "WYTHEVILLE",
             "inscription_txt": "WYTHEVILLE VA", "is_manuscript": False,
@@ -69,9 +69,9 @@ class VphcMarkerStripTests(TestCase):
             "no_marking_image": True,
         }
         base.update(payload)
-        return Contribution.objects.create(
+        return Submission.objects.create(
             contributor=self.user, collection=self.collection,
-            status=Contribution.STATUS_PENDING, submitted_data=base,
+            status=Submission.STATUS_PENDING, submitted_data=base,
             created_by=self.user, modified_by=self.user)
 
     def _marking(self, desc):
@@ -83,31 +83,31 @@ class VphcMarkerStripTests(TestCase):
 
     def test_create_strips_both_markers(self):
         """The two-marker shape, which a trailing-only strip would half-miss."""
-        contrib = self._contribution(
+        contrib = self._submission(
             desc="{} {} {}".format(LEAD, MARKER, TYPE_MARKER))
 
-        marking = apply_contribution_to_catalog(contrib)
+        marking = apply_submission_to_catalog(contrib)
 
         self.assertEqual(marking.desc, LEAD_PUBLIC)
         self.assertNotIn("[VPHC:", marking.desc)
 
-    def test_contribution_keeps_the_original_text(self):
+    def test_submission_keeps_the_original_text(self):
         """What makes the strip non-destructive rather than a deletion.
 
         The marker is the only record of why this row was flagged, so if the
-        contribution did not keep it the doubt would be gone for good.
+        submission did not keep it the doubt would be gone for good.
         """
-        contrib = self._contribution(desc="{} {}".format(LEAD, MARKER))
+        contrib = self._submission(desc="{} {}".format(LEAD, MARKER))
 
-        apply_contribution_to_catalog(contrib)
+        apply_submission_to_catalog(contrib)
 
         contrib.refresh_from_db()
         self.assertIn(MARKER, contrib.submitted_data["desc"])
 
     def test_description_without_a_marker_is_untouched(self):
-        contrib = self._contribution(desc="A perfectly ordinary description.")
+        contrib = self._submission(desc="A perfectly ordinary description.")
 
-        marking = apply_contribution_to_catalog(contrib)
+        marking = apply_submission_to_catalog(contrib)
 
         self.assertEqual(marking.desc, "A perfectly ordinary description.")
 
@@ -123,12 +123,12 @@ class VphcMarkerStripTests(TestCase):
             "is_irreg": False, "no_marking_image": True,
             "desc": "Seen in a dealer list. {}".format(MARKER),
         }
-        contrib = Contribution.objects.create(
+        contrib = Submission.objects.create(
             contributor=self.user, collection=self.collection,
-            status=Contribution.STATUS_PENDING, submitted_data=payload,
+            status=Submission.STATUS_PENDING, submitted_data=payload,
             created_by=self.user, modified_by=self.user)
 
-        marking = apply_contribution_to_catalog(contrib)
+        marking = apply_submission_to_catalog(contrib)
 
         self.assertIn(MARKER, marking.desc)
 
@@ -137,11 +137,11 @@ class VphcMarkerStripTests(TestCase):
 
         #110 names it alongside the marker: it is internal notation with no
         meaning to a philatelist reading the catalog. It survives on the
-        contribution, and the provenance blob carries it as `src`.
+        submission, and the provenance blob carries it as `src`.
         """
-        contrib = self._contribution(desc=LEAD)
+        contrib = self._submission(desc=LEAD)
 
-        marking = apply_contribution_to_catalog(contrib)
+        marking = apply_submission_to_catalog(contrib)
 
         self.assertEqual(marking.desc, LEAD_PUBLIC)
         self.assertNotIn("T1:r", marking.desc)
@@ -152,11 +152,11 @@ class VphcMarkerStripTests(TestCase):
         463 of the 2,317 crosswalk rows carry two cells and one carries 13, so
         matching a single cell would leave the rest behind.
         """
-        contrib = self._contribution(
+        contrib = self._submission(
             desc="Virginia Postal History Catalog Woodstock #4 "
                  "(T1:r6451;T1:r6452). Colours recorded: RED, BLACK.")
 
-        marking = apply_contribution_to_catalog(contrib)
+        marking = apply_submission_to_catalog(contrib)
 
         self.assertEqual(
             marking.desc,
@@ -169,10 +169,10 @@ class VphcMarkerStripTests(TestCase):
         A loose \\(.*?\\) would eat any parenthetical an editor later writes
         into a VPHC record, so the pattern spells the cell format out.
         """
-        contrib = self._contribution(
+        contrib = self._submission(
             desc="Struck upside down (see Simpson, p. 44) on a folded letter.")
 
-        marking = apply_contribution_to_catalog(contrib)
+        marking = apply_submission_to_catalog(contrib)
 
         self.assertEqual(
             marking.desc,
@@ -180,10 +180,10 @@ class VphcMarkerStripTests(TestCase):
 
     def test_edit_strips_the_marker_and_keeps_the_rest(self):
         marking = self._marking("Original description.")
-        contrib = self._contribution(
+        contrib = self._submission(
             edit_marking_id=marking.pk, desc="{} {}".format(LEAD, MARKER))
 
-        apply_contribution_to_catalog(contrib)
+        apply_submission_to_catalog(contrib)
 
         marking.refresh_from_db()
         self.assertEqual(marking.desc, LEAD_PUBLIC)
@@ -197,9 +197,9 @@ class VphcMarkerStripTests(TestCase):
         the submission never spoke to the description at all.
         """
         marking = self._marking("A description worth keeping.")
-        contrib = self._contribution(edit_marking_id=marking.pk, desc=MARKER)
+        contrib = self._submission(edit_marking_id=marking.pk, desc=MARKER)
 
-        apply_contribution_to_catalog(contrib)
+        apply_submission_to_catalog(contrib)
 
         marking.refresh_from_db()
         self.assertEqual(marking.desc, "A description worth keeping.")
@@ -220,7 +220,7 @@ class VphcProvenanceVisibilityTests(TestCase):
         self.editor = User.objects.create_user(username="editor", password="pw")
         editors = Group.objects.create(name="Editors")
         editors.permissions.add(
-            Permission.objects.get(codename="review_contribution"))
+            Permission.objects.get(codename="review_submission"))
         self.editor.groups.add(editors)
         self.stranger = User.objects.create_user(username="stranger", password="pw")
 
@@ -241,9 +241,9 @@ class VphcProvenanceVisibilityTests(TestCase):
             inscription_txt="WYTHEVILLE VA", is_manuscript=False, is_irreg=False,
             desc=LEAD, post_office=post_office,
             created_by=self.admin, modified_by=self.admin)
-        Contribution.objects.create(
+        Submission.objects.create(
             contributor=self.admin, collection=collection, marking=self.marking,
-            status=Contribution.STATUS_APPROVED,
+            status=Submission.STATUS_APPROVED,
             submitted_data={"vphc": VPHC_BLOB, "desc": "{} {}".format(LEAD, MARKER)},
             created_by=self.admin, modified_by=self.admin)
 

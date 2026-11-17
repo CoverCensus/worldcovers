@@ -1,0 +1,646 @@
+import { readSubmittedData, SubmissionFormData, type SubmittedData, type SubmissionRequest } from "@/lib/submission";
+/**
+ * Submissions (v2 Submission moderation tickets): list, read, submit, and
+ * editor decisions (approve / reject / request-revision).
+ *
+ * Single source for the submission transport that used to be copy-pasted as
+ * raw fetch() across SubmissionDetail, CoverSubmissionDetail, Dashboard,
+ * Contribute, and CoverEdit. Each of those sites manually
+ * re-read VITE_API_URL, read the CSRF cookie, hand-built headers, parsed res.ok,
+ * and re-implemented camelCase/snake_case normalization. All of that lives here
+ * now and goes through the configured apiClient.
+ *
+ * The backend renders responses with CamelCaseJSONRenderer, so reads use
+ * camelCase first and fall back to snake_case. ensureCsrfToken() runs before
+ * every unsafe verb so a freshly-landed user does not 403 on the first write.
+ */
+import apiClient, { ensureCsrfToken } from "@/lib/api";
+import type { AuthUser } from "@/lib/auth";
+import { countyIntentFromApi, type CountyIntent } from "@/lib/submissionDisplay";
+import {
+  sourceMarkingImageFromSubmission,
+  type SourceMarkingImage,
+} from "@/lib/coverFromImageHandoff";
+
+const SUBMISSION_UPLOAD_TIMEOUT_MS = 300000;
+
+/**
+ * One submission row off the wire. Tolerates camelCase (renderer) and
+ * snake_case, plus the optional display fields the editor lists read.
+ */
+export interface SubmissionApiItem {
+  id: number;
+  collection?: number | null;
+  status?: string;
+  contributor?: number | null;
+  contributorId?: number | null;
+  contributor_username?: string;
+  contributorUsername?: string;
+  review_notes?: string | null;
+  reviewNotes?: string | null;
+  created_at?: string;
+  createdAt?: string;
+  submitted_data?: unknown;
+  submittedData?: unknown;
+  display_name?: string;
+  displayName?: string;
+  updatedAt?: string;
+  townDisplay?: string;
+  stateDisplay?: string;
+  typeDisplay?: string;
+  shapeDisplay?: string;
+  colorDisplay?: string;
+  sizeDisplay?: string;
+  imageUrl?: string;
+  description?: string;
+  isArchived?: boolean;
+  archivedAt?: string;
+  archivedByUsername?: string;
+  archiveReason?: string;
+  marking_id?: number | null;
+  markingId?: number | null;
+  cover_id?: number | null;
+  coverId?: number | null;
+  // SubmissionDetailSerializer exposes the approved marking link as plain
+  // "marking" (the FK pk), distinct from the list serializer's "marking_id".
+  marking?: number | null;
+  // SubmissionDetailSerializer resolves a "Create cover from this image"
+  // submission's carried-over marking image (Trello T37); list rows omit it.
+  source_marking_image?: unknown;
+  sourceMarkingImage?: unknown;
+  // SubmissionDetailSerializer: a pending edit's target as it stands now,
+  // in the submit keys (Trello T39); null otherwise and on list rows.
+  edit_baseline?: unknown;
+  editBaseline?: unknown;
+  county_intent?: unknown;
+  [k: string]: unknown;
+}
+
+/** DRF paginated envelope for GET /submissions/ (count/results survive camelCasing). */
+export interface SubmissionListResponse {
+  count?: number;
+  next?: string | null;
+  previous?: string | null;
+  results?: SubmissionApiItem[];
+}
+
+/**
+ * Normalized submission for the SPA. Replaces the inline Submission /
+ * SubmissionRecord / SubmittedData interfaces that used to live in the page
+ * components. `submittedData` is read once at this API boundary into the shared
+ * Submission type. Display helpers receive that type.
+ */
+export interface Submission {
+  id: number;
+  collectionId: number | null;
+  contributorId: number | null;
+  status: string;
+  contributorUsername: string;
+  reviewNotes: string | null;
+  createdAt: string;
+  submittedData: SubmittedData;
+  unsupportedSubmissionFields?: string[];
+  displayName?: string;
+  updatedAt?: string;
+  townDisplay?: string;
+  stateDisplay?: string;
+  typeDisplay?: string;
+  shapeDisplay?: string;
+  colorDisplay?: string;
+  sizeDisplay?: string;
+  imageUrl?: string;
+  description?: string;
+  isArchived?: boolean;
+  archivedAt?: string;
+  archivedByUsername?: string;
+  archiveReason?: string;
+  markingId: number | null;
+  coverId: number | null;
+  /**
+   * The marking image a "Create cover from this image" submission carries,
+   * resolved by the detail endpoint; null when there is none, when it has
+   * since moved off the marking, or on list rows (Trello T37).
+   */
+  sourceMarkingImage: SourceMarkingImage | null;
+  /**
+   * The edit's target as it stands now, in the same keys as submittedData, for
+   * the review page's current-vs-proposed table. Null unless a reviewer is
+   * viewing an edit that awaits a decision (Trello T39).
+   */
+  editBaseline: SubmittedData | null;
+  /** The server's verdict on the submission's county, or null (Trello T70). */
+  countyIntent: CountyIntent | null;
+}
+
+export interface CatalogCodeSuggestion {
+  catalogCode: string;
+  prefix: string;
+  referenceCode: string;
+  regionAbbrev: string;
+  subjectType: "MARKING" | "COVER";
+}
+
+function toNumberOrNull(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && v.trim() !== "") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function listImageUrl(item: SubmissionApiItem): string {
+  const image = item.mainImage ?? item.main_image;
+  if (typeof image === "string") return image;
+  if (image && typeof image === "object") {
+    const row = image as { imageUrl?: unknown; image_url?: unknown };
+    const url = row.imageUrl ?? row.image_url;
+    if (typeof url === "string") return url;
+  }
+  return String(item.imageUrl ?? item.image_url ?? "");
+}
+
+/** First value that is neither null nor undefined, else null. */
+function firstDefined(...vals: unknown[]): unknown {
+  for (const v of vals) {
+    if (v !== undefined && v !== null) return v;
+  }
+  return null;
+}
+
+export function mapApiItemToSubmission(item: SubmissionApiItem): Submission {
+  const submittedRaw = item.submitted_data ?? item.submittedData ?? {};
+  const parsed = readSubmittedData(submittedRaw);
+  const baselineRaw = firstDefined(item.edit_baseline, item.editBaseline);
+  const baseline = baselineRaw == null ? null : readSubmittedData(baselineRaw);
+  return {
+    id: item.id,
+    collectionId: toNumberOrNull(item.collection),
+    contributorId: toNumberOrNull(firstDefined(item.contributor, item.contributorId)),
+    status: item.status ?? "pending",
+    contributorUsername: String(
+      item.contributor_username ?? item.contributorUsername ?? "",
+    ),
+    reviewNotes: (item.review_notes ?? item.reviewNotes ?? null) as string | null,
+    createdAt: String(item.created_at ?? item.createdAt ?? ""),
+    submittedData: parsed.data,
+    unsupportedSubmissionFields: [...parsed.unsupported, ...(baseline?.unsupported ?? [])],
+    displayName: (item.display_name ?? item.displayName) as string | undefined,
+    updatedAt: String(item.updated_at ?? item.updatedAt ?? item.created_at ?? item.createdAt ?? ""),
+    townDisplay: String(item.town_display || item.townDisplay || parsed.data.town || ""),
+    stateDisplay: String(item.state_display || item.stateDisplay || parsed.data.state || ""),
+    typeDisplay: String(item.type_display || item.typeDisplay || item.type || parsed.data.type || ""),
+    shapeDisplay: String(item.shape_display || item.shapeDisplay || item.shapeName || item.shape || parsed.data.shape || ""),
+    colorDisplay: String(item.color_display || item.colorDisplay || item.color || parsed.data.color || ""),
+    sizeDisplay: String(item.sizeDisplay || item.size || parsed.data.dimensions || ""),
+    imageUrl: listImageUrl(item),
+    description: String(item.description || parsed.data.description || ""),
+    isArchived: (item.is_archived ?? item.isArchived) === true,
+    archivedAt: String(item.archived_at ?? item.archivedAt ?? ""),
+    archivedByUsername: String(item.archived_by_username ?? item.archivedByUsername ?? ""),
+    archiveReason: String(item.archive_reason ?? item.archiveReason ?? ""),
+    // "marking" is what the detail serializer returns; without it the detail
+    // page sees a null marking id and the approved-to-record redirect never fires.
+    markingId: toNumberOrNull(firstDefined(item.marking_id, item.markingId, item.marking)),
+    coverId: toNumberOrNull(firstDefined(item.cover_id, item.coverId)),
+    sourceMarkingImage: sourceMarkingImageFromSubmission(item),
+    editBaseline: baseline?.data ?? null,
+    countyIntent: countyIntentFromApi(item.county_intent),
+  };
+}
+
+export function canReviewSubmission(user: AuthUser | null, submission: Submission | null): boolean {
+  if (!user || !submission || submission.status !== "pending") return false;
+  if (user.is_superuser || user.role === "administrator") return true;
+  return (
+    user.role === "editor" && submission.collectionId != null &&
+    (user.assigned_collections ?? []).some((collection) => collection.id === submission.collectionId)
+  );
+}
+
+/** Query filters for GET /submissions/. camelCase here maps to snake_case params. */
+export interface SubmissionListParams {
+  /** "archived" is the editor recycle bin -- same scoping as "editor" (#89). */
+  mode?: "editor" | "archived";
+  status?: string;
+  state?: string;
+  /**
+   * Free text (#109). Matches town, state, type, inscription, the VPHC
+   * reference code and the contributor's username, plus the entry number when
+   * the text is all digits.
+   */
+  q?: string;
+  town?: string;
+  /** Shape NAME as stored in submitted_data ("C - Circle"), not the Shape id. */
+  shape?: string;
+  color?: string;
+  /** ISO yyyy-mm-dd. Both ends inclusive; anything else is a 400. */
+  submittedFrom?: string;
+  submittedTo?: string;
+  /**
+   * Where the row came from (#101). "vphc" is the ingest, "human" is a person
+   * who used the submission form. Bulk review defaults to "vphc" so a
+   * select-all cannot sweep up a real submission -- the queue is live, and a
+   * whole-queue operation nearly destroyed eight of them once already.
+   */
+  source?: "vphc" | "human" | "all";
+  page?: number;
+  pageSize?: number;
+  ordering?: string;
+}
+
+export interface SubmissionListResult {
+  items: Submission[];
+  /** null when the API returns a bare array instead of a paginated envelope. */
+  count: number | null;
+  next: string | null;
+}
+
+/** GET /submissions/ with optional filters. Handles array or paginated responses. */
+/**
+ * Wire params for the queue, shared by the list and by "select all matching".
+ *
+ * Both endpoints MUST send the same filters. The backend runs each through the
+ * identical filter_queryset(get_queryset()) path, so if these two callers built
+ * their query differently, "select all 14 matching" would select a different 14
+ * from the ones on screen -- and an editor would approve rows they never saw.
+ * Pagination is excluded: the id list is the whole match set, not a page of it.
+ */
+function buildSubmissionQuery(
+  params?: SubmissionListParams,
+): Record<string, string | number> {
+  const query: Record<string, string | number> = {};
+  if (params?.mode) query.mode = params.mode;
+  if (params?.status) query.status = params.status;
+  if (params?.state) query.state = params.state;
+  // Issue #109: these have to reach the API. They used to be applied in the
+  // browser to the page it had already fetched, so at 2,440 rows a search
+  // silently returned "nothing" unless the target was on the current page.
+  if (params?.q?.trim()) query.q = params.q.trim();
+  if (params?.town?.trim()) query.town = params.town.trim();
+  if (params?.shape && params.shape !== "all") query.shape = params.shape;
+  if (params?.color && params.color !== "all") query.color = params.color;
+  if (params?.submittedFrom) query.submitted_from = params.submittedFrom;
+  if (params?.submittedTo) query.submitted_to = params.submittedTo;
+  if (params?.source) query.source = params.source;
+  return query;
+}
+
+export async function listSubmissions(
+  params?: SubmissionListParams,
+): Promise<SubmissionListResult> {
+  const query = buildSubmissionQuery(params);
+  if (params?.page != null) query.page = params.page;
+  if (params?.pageSize != null) query.page_size = params.pageSize;
+  if (params?.ordering) query.ordering = params.ordering;
+
+  const res = await apiClient.get("/submissions/", { params: query });
+  const data = res.data;
+  const rawItems: SubmissionApiItem[] = Array.isArray(data)
+    ? (data as SubmissionApiItem[])
+    : Array.isArray((data as SubmissionListResponse)?.results)
+      ? ((data as SubmissionListResponse).results as SubmissionApiItem[])
+      : [];
+  const count = Array.isArray(data)
+    ? data.length
+    : typeof (data as SubmissionListResponse)?.count === "number"
+      ? ((data as SubmissionListResponse).count as number)
+      : null;
+  const next = !Array.isArray(data) && typeof (data as SubmissionListResponse)?.next === "string"
+    ? (data as SubmissionListResponse).next as string
+    : null;
+  return { items: rawItems.map(mapApiItemToSubmission), count, next };
+}
+
+/** Load every submission owned by the signed-in user for My Submissions. */
+export async function listMySubmissions(): Promise<{
+  items: Submission[];
+  incomplete: boolean;
+}> {
+  const pageSize = 100;
+  const all: Submission[] = [];
+  for (let page = 1; ; page += 1) {
+    let result: SubmissionListResult;
+    try {
+      result = await listSubmissions({ page, pageSize });
+    } catch (error) {
+      if (page === 1) throw error;
+      return { items: all, incomplete: true };
+    }
+    all.push(...result.items);
+    if (!result.next) {
+      return { items: all, incomplete: result.count !== null && all.length < result.count };
+    }
+  }
+}
+
+/** GET /submissions/{id}/ -- normalized single submission. Errors propagate. */
+export async function getSubmission(id: number): Promise<Submission> {
+  const res = await apiClient.get(`/submissions/${id}/`);
+  return mapApiItemToSubmission(res.data as SubmissionApiItem);
+}
+
+/** Minimal write result; `raw` is the untouched response for any field not unified here. */
+export interface SubmissionWriteResult {
+  submissionId: number | null;
+  markingId: number | null;
+  coverId: number | null;
+  raw: Record<string, unknown>;
+}
+
+function mapWriteResult(raw: unknown): SubmissionWriteResult {
+  const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  return {
+    submissionId: toNumberOrNull(
+      firstDefined(o.submissionId, o.submission_id, o.id),
+    ),
+    markingId: toNumberOrNull(firstDefined(o.marking_id, o.markingId)),
+    coverId: toNumberOrNull(firstDefined(o.cover_id, o.coverId)),
+    raw: o,
+  };
+}
+
+/**
+ * POST /submissions/ -- submit a submission (new, draft, edit, or abandon).
+ *
+ * The caller builds the body. Pass a FormData when uploading images (apiClient
+ * strips Content-Type so the browser sets the multipart boundary) or a plain
+ * object for JSON submissions (axios sets application/json). The 30-field body
+ * builders stay in the page components since they are tightly coupled to form
+ * state; this function owns only CSRF + transport + response normalization.
+ */
+export async function createSubmission(
+  body: SubmissionFormData | SubmissionRequest,
+): Promise<SubmissionWriteResult> {
+  await ensureCsrfToken();
+  const isMultipart = typeof FormData !== "undefined" && body instanceof FormData;
+  const res = await apiClient.post(
+    "/submissions/",
+    body,
+    isMultipart ? { timeout: SUBMISSION_UPLOAD_TIMEOUT_MS } : undefined,
+  );
+  return mapWriteResult(res.data);
+}
+
+/**
+ * Discard a cover Submission draft after its cover was submitted via the
+ * catalog API. Thin wrapper over createSubmission with the abandon flags.
+ */
+export async function abandonCoverSubmissionDraft(submissionId: number): Promise<void> {
+  const form = new SubmissionFormData();
+  form.append("submission_kind", "cover");
+  form.append("abandon_draft", "true");
+  form.append("edit_submission_id", String(submissionId));
+  await createSubmission(form);
+}
+
+export type SubmissionAction = "approve" | "reject" | "revision";
+
+export interface DecideOptions {
+  officeCode?: string;
+  markingCode?: string;
+  markingIsBackstamp?: boolean;
+  /** Saved as review_notes; sent only when non-empty. */
+  reviewNotes?: string;
+  /** Approve only; sent only when provided. */
+  estimatedValue?: number;
+  /** Approve only; editor-owned catalog code. Empty means regenerate. */
+  catalogCode?: string | null;
+}
+
+export interface DecideResult {
+  markingId: number | null;
+  coverId: number | null;
+  /** Trello T37: the Cover submission approval created from a Marking that carried one. */
+  pendingCoverSubmissionId: number | null;
+  raw: Record<string, unknown>;
+}
+
+/**
+ * GET /submissions/ids/ -- every id matching the current filters (#101).
+ *
+ * This is what "select all matching" means. It deliberately does NOT reuse the
+ * fetched page: #109's lesson is that anything derived client-side from one
+ * page lies at scale, and here that lie would approve the wrong rows.
+ */
+export async function listSubmissionIds(
+  params?: SubmissionListParams,
+): Promise<{ ids: number[]; count: number }> {
+  const res = await apiClient.get("/submissions/ids/", {
+    params: buildSubmissionQuery(params),
+  });
+  const data = res.data as { ids?: unknown; count?: unknown };
+  const ids = Array.isArray(data.ids)
+    ? data.ids.filter((v): v is number => typeof v === "number")
+    : [];
+  return { ids, count: typeof data.count === "number" ? data.count : ids.length };
+}
+
+export interface BulkReviewFailure {
+  id: number;
+  reason: string;
+}
+
+export interface BulkReviewResult {
+  succeeded: number[];
+  failed: BulkReviewFailure[];
+}
+
+/**
+ * Rows per request. The server caps at 50; this is the client's working size.
+ *
+ * Measured on a full-size queue (2,443 pending): one approval is ~174 ms mean,
+ * ~274 ms worst, so 25 rows is ~4.4 s and the whole queue is ~7 minutes. Small
+ * enough to stay far clear of any proxy timeout, large enough that draining the
+ * queue is ~98 requests rather than 2,443.
+ */
+export const BULK_REVIEW_BATCH_SIZE = 25;
+
+/**
+ * POST /submissions/bulk-{approve,reject}/ over `ids`, in batches.
+ *
+ * Sequential, not parallel: every row in a batch mints catalog codes off the
+ * same prefix, and concurrent requests would race for the same serial. The
+ * server retries that race, but there is no reason to manufacture it -- and
+ * sequential batches give an honest progress bar.
+ *
+ * Failures never abort the run. Each row commits independently server-side, so
+ * a bad row is reported and the rest still land (#101 AC-4); the caller gets
+ * every failure at the end and can retry just those ids.
+ */
+export async function bulkReviewSubmissions(
+  action: "approve" | "reject",
+  ids: number[],
+  options?: {
+    reviewNotes?: string;
+    onProgress?: (done: number, total: number) => void;
+    signal?: AbortSignal;
+  },
+): Promise<BulkReviewResult> {
+  const path = action === "approve" ? "bulk-approve" : "bulk-reject";
+  const key = action === "approve" ? "approved" : "rejected";
+  const succeeded: number[] = [];
+  const failed: BulkReviewFailure[] = [];
+
+  for (let i = 0; i < ids.length; i += BULK_REVIEW_BATCH_SIZE) {
+    if (options?.signal?.aborted) break;
+    const slice = ids.slice(i, i + BULK_REVIEW_BATCH_SIZE);
+    try {
+      const res = await apiClient.post(
+        `/submissions/${path}/`,
+        { ids: slice, review_notes: options?.reviewNotes ?? "" },
+        { signal: options?.signal },
+      );
+      const data = res.data as Record<string, unknown>;
+      const ok = Array.isArray(data[key]) ? (data[key] as number[]) : [];
+      succeeded.push(...ok);
+      const bad = Array.isArray(data.failed) ? (data.failed as BulkReviewFailure[]) : [];
+      failed.push(...bad);
+    } catch (err) {
+      // A transport-level failure loses the whole slice, not the run. Report
+      // every id in it so the editor can retry them rather than being told
+      // "1,150 of 2,443" with no account of the missing ones.
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+        (err as Error)?.message ??
+        "Request failed.";
+      for (const id of slice) failed.push({ id, reason: detail });
+    }
+    options?.onProgress?.(Math.min(i + slice.length, ids.length), ids.length);
+  }
+
+  return { succeeded, failed };
+}
+
+/**
+ * POST /submissions/{id}/{approve|reject|request-revision}/.
+ * "revision" maps to the "request-revision" path.
+ */
+export async function decideSubmission(
+  id: number,
+  action: SubmissionAction,
+  opts?: DecideOptions,
+): Promise<DecideResult> {
+  await ensureCsrfToken();
+  const actionPath =
+    action === "approve" ? "approve" : action === "reject" ? "reject" : "request-revision";
+  const body: Record<string, unknown> = {};
+  const notes = opts?.reviewNotes?.trim();
+  if (notes) body.review_notes = notes;
+  if (opts?.officeCode) body.office_code = opts.officeCode;
+  if (opts?.markingCode) {
+    body.marking_code = opts.markingCode;
+    body.marking_is_backstamp = Boolean(opts.markingIsBackstamp);
+  }
+  if (opts?.estimatedValue != null) body.estimated_value = opts.estimatedValue;
+  if (opts && "catalogCode" in opts) body.catalog_code = opts.catalogCode ?? "";
+
+  const res = await apiClient.post(`/submissions/${id}/${actionPath}/`, body);
+  const o = res.data && typeof res.data === "object" ? (res.data as Record<string, unknown>) : {};
+  return {
+    markingId: toNumberOrNull(firstDefined(o.marking_id, o.markingId)),
+    coverId: toNumberOrNull(firstDefined(o.cover_id, o.coverId)),
+    pendingCoverSubmissionId: toNumberOrNull(
+      firstDefined(o.pendingCoverSubmissionId, o.pending_cover_submission_id),
+    ),
+    raw: o,
+  };
+}
+
+function mapCatalogCodeSuggestion(raw: unknown): CatalogCodeSuggestion {
+  const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  return {
+    catalogCode: String(o.catalog_code ?? o.catalogCode ?? ""),
+    prefix: String(o.prefix ?? ""),
+    referenceCode: String(o.reference_code ?? o.referenceCode ?? ""),
+    regionAbbrev: String(o.region_abbrev ?? o.regionAbbrev ?? ""),
+    subjectType:
+      String(o.subject_type ?? o.subjectType ?? "MARKING").toUpperCase() === "COVER"
+        ? "COVER"
+        : "MARKING",
+  };
+}
+
+export async function getSubmissionCatalogCodeSuggestion(
+  submissionId: number,
+  opts?: { force?: boolean },
+): Promise<CatalogCodeSuggestion> {
+  await ensureCsrfToken();
+  const res = await apiClient.post(
+    `/submissions/${submissionId}/catalog-code-suggestion/`,
+    opts?.force ? { force: true } : {},
+  );
+  return mapCatalogCodeSuggestion(res.data);
+}
+
+export async function getDirectCatalogCodeSuggestion(payload: {
+  subjectType: "MARKING" | "COVER";
+  state?: string;
+  regionId?: number | null;
+  markingId?: number | null;
+  referenceWorkId?: number | null;
+  referenceWorkIds?: number[];
+  excludeId?: number | null;
+}): Promise<CatalogCodeSuggestion> {
+  await ensureCsrfToken();
+  const res = await apiClient.post("/catalog-code-suggestions/", {
+    subject_type: payload.subjectType,
+    state: payload.state,
+    region_id: payload.regionId ?? undefined,
+    marking_id: payload.markingId ?? undefined,
+    reference_work_id: payload.referenceWorkId ?? undefined,
+    reference_work_ids: payload.referenceWorkIds,
+    exclude_id: payload.excludeId ?? undefined,
+  });
+  return mapCatalogCodeSuggestion(res.data);
+}
+
+// DELETE /submissions/{id}/  -- hard-deletes (withdraws) an unapproved
+// submission; backend enforces IsOwnDeletableSubmission (status must NOT be
+// "approved" and requester must be the owner or a superuser). No response body.
+export async function deleteOwnSubmission(submissionId: number): Promise<void> {
+  await ensureCsrfToken();
+  await apiClient.delete(`/submissions/${submissionId}/`);
+}
+
+/** Result shape shared by the archive/restore actions; mirrors removeMarking. */
+type ArchiveResult = { ok: true } | { ok: false; message: string };
+
+function archiveError(err: unknown, fallback: string): ArchiveResult {
+  const ax = err as { response?: { data?: { detail?: string } } };
+  const detail = ax.response?.data?.detail;
+  return { ok: false, message: typeof detail === "string" ? detail : fallback };
+}
+
+/**
+ * Editor: POST /submissions/{id}/archive/ -- clear a reviewed entry off the
+ * review dashboard (Issue #89). Soft: the submission is untouched and stays
+ * visible to its contributor. The backend rejects a pending submission.
+ */
+export async function archiveSubmission(
+  submissionId: number,
+  reason?: string,
+): Promise<ArchiveResult> {
+  await ensureCsrfToken();
+  try {
+    await apiClient.post(`/submissions/${submissionId}/archive/`, {
+      reason: reason ?? "",
+    });
+    return { ok: true };
+  } catch (err: unknown) {
+    return archiveError(err, "Could not archive this entry.");
+  }
+}
+
+/** Editor: POST /submissions/{id}/restore/ -- put an archived entry back in the queue. */
+export async function restoreSubmission(
+  submissionId: number,
+): Promise<ArchiveResult> {
+  await ensureCsrfToken();
+  try {
+    await apiClient.post(`/submissions/${submissionId}/restore/`, {});
+    return { ok: true };
+  } catch (err: unknown) {
+    return archiveError(err, "Could not restore this entry.");
+  }
+}

@@ -1,5 +1,5 @@
-import type { Contribution } from "@/services/contributions";
-import { contributionImageMetasFromSubmittedData, contributionMetaImageUrl } from "@/lib/contributionImages";
+import type { Submission } from "@/services/submissions";
+import { submissionImageMetasFromSubmittedData, submissionMetaImageUrl } from "@/lib/submissionImages";
 
 import { Navigation } from "@/components/Navigation";
 import { EditorNavigation } from "@/components/EditorNavigation";
@@ -33,12 +33,12 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { Link, useNavigate, useLocation, useSearchParams } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import {
-  contributionCardPresentation,
-  isCoverContributionData,
-  materializedCoverIdFromContribution,
-  parentMarkingIdFromContribution,
-  type ContributionCardPresentation,
-} from "@/lib/contributionDisplay";
+  submissionCardPresentation,
+  isCoverSubmissionData,
+  materializedCoverIdFromSubmission,
+  parentMarkingIdFromSubmission,
+  type SubmissionCardPresentation,
+} from "@/lib/submissionDisplay";
 import { useAuth } from "@/hooks/useAuth";
 import imageNotAvailable from "@/assets/image-not-available.jpg";
 import { cn } from "@/lib/utils";
@@ -51,16 +51,16 @@ import {
 } from "@/services/markings";
 import { getRecycleBinCovers, type RecycleBinCover } from "@/services/covers";
 import {
-  archiveContribution,
-  listContributions,
-  listMyContributions,
-  restoreContribution,
-} from "@/services/contributions";
+  archiveSubmission,
+  listSubmissions,
+  listMySubmissions,
+  restoreSubmission,
+} from "@/services/submissions";
 import { BulkReviewBar } from "@/components/BulkReviewBar";
 import { PendingLoginRequestsCard } from "@/components/PendingLoginRequestsCard";
 import { SubmissionCountsBar, type SubmissionCountTarget } from "@/components/SubmissionCountsBar";
 import { getStatusBadge, statusColorClass } from "@/lib/statusBadge";
-import { withReturnTo } from "@/lib/returnTo";
+import { dashboardItemTarget, type DashboardOpenable } from "@/lib/dashboardItemTarget";
 import { catalogHref } from "@/lib/catalogParams";
 import { Checkbox } from "@/components/ui/checkbox";
 import { SearchableSelect } from "@/components/ui/searchable-select";
@@ -84,15 +84,15 @@ const EDITOR_DEBOUNCE_MS = 800;
 /** Only a well-formed date goes to the API; see the editorFrom/editorTo note. */
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-function resolveSubmissionImageUrl(c: Contribution): string | null {
+function resolveSubmissionImageUrl(c: Submission): string | null {
   const direct = normalizeImageUrl(c.imageUrl);
   if (direct) return direct;
   for (const url of c.submittedData.marking_images ?? []) {
     const normalized = normalizeImageUrl(url);
     if (normalized) return normalized;
   }
-  for (const meta of contributionImageMetasFromSubmittedData(c.submittedData)) {
-    const url = contributionMetaImageUrl(meta);
+  for (const meta of submissionImageMetasFromSubmittedData(c.submittedData)) {
+    const url = submissionMetaImageUrl(meta);
     if (url) return normalizeImageUrl(url);
   }
   return null;
@@ -103,7 +103,7 @@ type DashboardTab = "submissions" | "editor";
 interface DashboardItem {
   id: number;
   name: string;
-  presentation: ContributionCardPresentation;
+  presentation: SubmissionCardPresentation;
   town: string;
   state: string;
   shape?: string;
@@ -117,17 +117,17 @@ interface DashboardItem {
   cover_id?: number | null;
   /** True when this is an edit to an existing catalog entry. */
   isCatalogEdit?: boolean;
-  /** True when this contribution is a cover (vs a marking); routes editing to CoverEdit. */
+  /** True when this submission is a cover (vs a marking); routes editing to CoverEdit. */
   isCover?: boolean;
-  /** Parent marking id for a cover contribution; needed to build the CoverEdit route. */
+  /** Parent marking id for a cover submission; needed to build the CoverEdit route. */
   cover_parent_marking_id?: number | null;
 }
 
-/** Contribution row shown in the editor dashboard history list. */
+/** Submission row shown in the editor dashboard history list. */
 interface EditorHistoryItem {
   id: number;
   contributor_username: string;
-  presentation: ContributionCardPresentation;
+  presentation: SubmissionCardPresentation;
   state_display: string;
   town_display: string;
   shape_display: string;
@@ -153,12 +153,12 @@ function dashboardDate(value: string): string {
   return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString();
 }
 
-function ContributionSummaryFields({
+function SubmissionSummaryFields({
   presentation,
   updatedAt,
   compact = false,
 }: {
-  presentation: ContributionCardPresentation;
+  presentation: SubmissionCardPresentation;
   updatedAt: string;
   compact?: boolean;
 }) {
@@ -322,16 +322,15 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   // Resume a draft submission. Cover drafts edit through CoverEdit; marking drafts
   // through the Contribute form. A cover draft with no resolvable parent marking
   // falls back to the marking form rather than building a broken /record route.
+  // `from` rides along so the form returns here (the dashboard view on screen)
+  // on save/back instead of dumping the user on the parent marking record.
   const goEditDraft = (s: DashboardItem) => {
-    if (s.isCover && s.cover_parent_marking_id != null) {
-      // Pass `from` so CoverEdit returns here (the dashboard) on save/back,
-      // instead of dumping the user on the parent marking record.
-      navigate(`/record/${s.cover_parent_marking_id}/cover/new?edit=${s.id}`, {
-        state: { from: dashboardFrom() },
-      });
-      return;
-    }
-    navigate(`/contribute?edit=${s.id}`, { state: { from: dashboardFrom() } });
+    const target = dashboardItemTarget(
+      { ...s, status: "draft" },
+      dashboardFrom(),
+      dashboardReturnState(),
+    );
+    navigate(target.to, { state: target.state });
   };
 
   const goEditSubmission = (s: DashboardItem) => {
@@ -350,7 +349,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
     if (s.isCover && coverParentMarkingId != null && s.cover_id != null) {
       // Approved cover submissions already have a materialized Cover row.
-      // Edit that cover directly instead of sending an approved contribution id
+      // Edit that cover directly instead of sending an approved submission id
       // through the draft/resubmission endpoint.
       navigate(`/record/${coverParentMarkingId}/cover/${s.cover_id}/edit`, {
         state: { from: dashboardFrom() },
@@ -359,8 +358,8 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     }
 
     if (s.isCover && coverParentMarkingId != null) {
-      // Returned cover contributions resume through CoverEdit with the
-      // contribution id. Routing to /edit/:markingId would open the parent
+      // Returned cover submissions resume through CoverEdit with the
+      // submission id. Routing to /edit/:markingId would open the parent
       // marking editor instead.
       navigate(`/record/${coverParentMarkingId}/cover/new?edit=${s.id}`, {
         state: { from: dashboardFrom() },
@@ -405,7 +404,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     if (!archiveTarget || archiving) return;
     setArchiving(true);
     try {
-      const res = await archiveContribution(archiveTarget.id, archiveReason.trim() || undefined);
+      const res = await archiveSubmission(archiveTarget.id, archiveReason.trim() || undefined);
       if (res.ok) {
         toast({
           title: "Entry archived",
@@ -452,7 +451,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     if (restoringId != null) return;
     setRestoringId(item.id);
     try {
-      const res = await restoreContribution(item.id);
+      const res = await restoreSubmission(item.id);
       if (res.ok) {
         toast({ title: "Entry restored", description: "It is back in the review queue." });
         setSubmissionsRefetchKey((k) => k + 1);
@@ -468,27 +467,20 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     }
   };
 
-  const goOpenDashboardItem = (item: {
-    id: number;
-    status: string;
-    marking_id?: number | null;
-    cover_id?: number | null;
-    isCover?: boolean;
-  }) => {
-    const statusNorm = String(item.status || "").toLowerCase();
-    if (statusNorm === "draft") {
-      goEditDraft(item as DashboardItem);
-      return;
-    }
-    // Issue #147: state alone was not enough. It is dropped by a reload and
-    // never present when someone opens the row in a new tab or follows a
-    // mailed link, and the editor was then returned to a defaulted queue --
-    // "repeat the entire search process again including changing the number of
-    // records shown" (Todd Hause, AL editor, 2026-08-31). dashboardFrom() is
-    // the view currently on screen, query string and all.
-    navigate(withReturnTo(`/contribution/${item.id}`, dashboardFrom()), {
-      state: dashboardReturnState(),
-    });
+  // Where a row opens: the image button, the title link and the status badge
+  // all ask dashboardItemTarget (T97), so they cannot disagree. Issue #147:
+  // state alone was not enough. It is dropped by a reload and never present
+  // when someone opens the row in a new tab or follows a mailed link, and the
+  // editor was then returned to a defaulted queue -- "repeat the entire search
+  // process again including changing the number of records shown" (Todd Hause,
+  // AL editor, 2026-08-31). dashboardFrom() is the view currently on screen,
+  // query string and all, and rides in the return-to query.
+  const openTarget = (item: DashboardOpenable) =>
+    dashboardItemTarget(item, dashboardFrom(), dashboardReturnState());
+
+  const goOpenDashboardItem = (item: DashboardOpenable) => {
+    const target = openTarget(item);
+    navigate(target.to, { state: target.state });
   };
   // `?tab=` wins when present; otherwise fall back to the route's initialTab so
   // the Navigation menu's location-state links keep working unchanged.
@@ -496,7 +488,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     searchParams.has("tab") ? initialParams.tab : initialTab,
   );
 
-  // When returning from contribution detail, switch to editor tab if requested
+  // When returning from submission detail, switch to editor tab if requested
   useEffect(() => {
     const tab = (location.state as { tab?: DashboardTab } | null)?.tab;
     if (tab === "editor" || tab === "submissions") {
@@ -512,11 +504,11 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const [goToPageInput, setGoToPageInput] = useState("");
   const [itemsPerPage, setItemsPerPage] = useState(initialParams.submissions.pageSize);
 
-  // Editor tab: history of user contributions in assigned states, not full catalog.
+  // Editor tab: history of user submissions in assigned states, not full catalog.
   const [editorHistoryItems, setEditorHistoryItems] = useState<EditorHistoryItem[]>([]);
   // Recycle-bin markings shown when editorHistoryStatusFilter === "removed".
-  // Kept separate from editorHistoryItems (contributions) because the rows are
-  // markings and navigate to /record/:id instead of /contribution/:id.
+  // Kept separate from editorHistoryItems (submissions) because the rows are
+  // markings and navigate to /record/:id instead of /submission/:id.
   const [removedMarkings, setRemovedMarkings] = useState<MarkingRecord[]>([]);
   // Recycle-bin covers shown alongside removedMarkings when the filter is
   // "removed". Loaded once (first page) and navigate to /covers/:id to restore.
@@ -546,7 +538,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   const [editorSourceFilter, setEditorSourceFilter] = useState<DashboardSource>(
     initialParams.editor.source,
   );
-  const [selectedContributionIds, setSelectedContributionIds] = useState<number[]>([]);
+  const [selectedSubmissionIds, setSelectedSubmissionIds] = useState<number[]>([]);
   const [editorSearchQuery, setEditorSearchQuery] = useState(initialParams.editor.q);
   const [editorTownFilter, setEditorTownFilter] = useState(initialParams.editor.town);
   const [editorShapeFilter, setEditorShapeFilter] = useState(initialParams.editor.shape);
@@ -646,7 +638,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
   // Prevent duplicate fetches during rapid re-renders / user rehydration.
   const submissionsInFlightKey = useRef<string | null>(null);
-  // Fetch current user's contributions for "My Submissions".
+  // Fetch current user's submissions for "My Submissions".
   useEffect(() => {
     if (!user) {
       setSubmissions([]);
@@ -661,9 +653,9 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     const fetchSubmissions = async () => {
       setLoading(true);
       try {
-        // Fetch all contributor-owned contributions so submissions and edit
+        // Fetch all contributor-owned submissions so submissions and edit
         // drafts appear in one canonical My Submissions list.
-        const result = await listMyContributions();
+        const result = await listMySubmissions();
         const list = result.items;
         if (result.incomplete) {
           toast({
@@ -683,20 +675,20 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
           const imageUrl = resolveSubmissionImageUrl(c);
 
-          // Cover contributions edit through CoverEdit (/record/:markingId/cover/new),
+          // Cover submissions edit through CoverEdit (/record/:markingId/cover/new),
           // not the marking Contribute form. Detect by submitted_data and capture
           // the parent marking id needed to build that route.
           const sd = submittedData;
-          const isCover = isCoverContributionData(sd);
-          const coverParentMarkingId = isCover ? parentMarkingIdFromContribution(sd) : null;
-          const coverId = c.coverId ?? materializedCoverIdFromContribution(sd);
+          const isCover = isCoverSubmissionData(sd);
+          const coverParentMarkingId = isCover ? parentMarkingIdFromSubmission(sd) : null;
+          const coverId = c.coverId ?? materializedCoverIdFromSubmission(sd);
           const typeValue =
             c.typeDisplay || submittedData.type || "";
           const shapeValue =
             c.shapeDisplay || submittedData.shape || "";
           const colorValue = c.colorDisplay || submittedData.color || "";
           const sizeValue = c.sizeDisplay || submittedData.dimensions || "";
-          const presentation = contributionCardPresentation({
+          const presentation = submissionCardPresentation({
             id: c.id,
             submittedData: sd,
             town,
@@ -796,7 +788,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     }
     let cancelled = false;
     setEditorPendingLoading(true);
-    listContributions({ mode: "editor", status: "pending", pageSize: 1 })
+    listSubmissions({ mode: "editor", status: "pending", pageSize: 1 })
       .then(({ count }) => {
         if (!cancelled) setEditorPendingCount(count);
       })
@@ -864,7 +856,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
     setEditorHistoryError(null);
     setEditorHistoryFetching(true);
     // "Removed" swaps the data source to the recycle bin (markings), not the
-    // contribution list. The endpoint is region-scoped server side, so the
+    // submission list. The endpoint is region-scoped server side, so the
     // state filter is not sent here.
     if (editorHistoryStatusFilter === "removed") {
       // Removed covers are loaded separately (first 50, no pagination); they
@@ -895,12 +887,12 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
       ["pending", "approved", "rejected", "needs_revision"].includes(editorHistoryStatusFilter)
         ? editorHistoryStatusFilter
         : undefined;
-    // "Archived" (Issue #89) is the same contribution list under a different
+    // "Archived" (Issue #89) is the same submission list under a different
     // lens, so it reuses this whole mapping path rather than a parallel branch
     // the way "removed" (markings) has to.
     const isArchivedView = editorHistoryStatusFilter === "archived";
     const seq = ++editorFetchSeq.current;
-    listContributions({
+    listSubmissions({
       mode: isArchivedView ? "archived" : "editor",
       status: historyStatus,
       state: editorStateFilter !== "all" ? editorStateFilter : undefined,
@@ -925,7 +917,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
         const mapped = list.map((c) => {
           const submittedData = c.submittedData;
           const sd = submittedData;
-          const isCover = isCoverContributionData(sd);
+          const isCover = isCoverSubmissionData(sd);
           const townDisplay = c.townDisplay ?? "";
           const stateDisplay = c.stateDisplay ?? "";
           const typeDisplay =
@@ -941,7 +933,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
               sd.color ??
               "",
           );
-          const presentation = contributionCardPresentation({
+          const presentation = submissionCardPresentation({
             id: c.id,
             submittedData: sd,
             town: townDisplay,
@@ -961,7 +953,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
             marking_id: c.markingId ?? null,
             cover_id:
               c.coverId ??
-              materializedCoverIdFromContribution(sd),
+              materializedCoverIdFromSubmission(sd),
             isCover,
             status: String(c.status ?? "pending"),
             created_at: String(c.createdAt ?? ""),
@@ -991,7 +983,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
         //     older backend" that is this one, and silently hiding rows if it
         //     ever fired;
         //   - a per-page dedupe by marking_id:cover_id ending in a re-sort by
-        //     created_at. The dedupe never engaged (a Contribution only gets a
+        //     created_at. The dedupe never engaged (a Submission only gets a
         //     marking on approval, so a queued row has none) and the re-sort
         //     silently overrode whatever ?ordering= asked for -- the same
         //     regression Catalog Search records having already fixed once.
@@ -1282,12 +1274,12 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
   }, [assignedCollectionsExpanded, user?.assigned_collections]);
 
   // The editor recycle bin for entries (Issue #89). Unlike "removed" (which
-  // swaps to markings/covers), this is the same contribution list, so it renders
+  // swaps to markings/covers), this is the same submission list, so it renders
   // through the normal row path with archive metadata and a Restore action.
   const isArchivedView = editorHistoryStatusFilter === "archived";
 
   // In "removed" mode the rows on the page come from removedMarkings, not the
-  // contribution list, so the page-end count must read that length instead.
+  // submission list, so the page-end count must read that length instead.
   const editorHistoryRowsOnPage =
     editorHistoryStatusFilter === "removed" ? removedMarkings.length : editorHistoryItems.length;
   const editorHistoryTotalCount = editorHistoryTotal ?? editorHistoryRowsOnPage;
@@ -1330,7 +1322,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
               </h1>
               <p className="text-muted-foreground">
                 {isEditor && activeTab === "editor"
-                  ? "Review pending submissions and see contribution history in your assigned states."
+                  ? "Review pending submissions and see submission history in your assigned states."
                   : "View and track your submissions."}
               </p>
               {isEditor && user?.assigned_collections && user.assigned_collections.length > 0 && (
@@ -1672,7 +1664,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                 </div>
               </div>
 
-              {/* Submissions List (backed by contributions; can manage linked catalog entry when present) */}
+              {/* Submissions List (backed by submissions; can manage linked catalog entry when present) */}
               {loading ? (
                  <div className="flex flex-col justify-center items-center gap-3 py-12 text-muted-foreground">
                  <Loader2 className="h-6 w-6 animate-spin" aria-hidden="true" />
@@ -1690,7 +1682,9 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                 </Card>
               ) : (
                 <div className="space-y-4">
-                  {paginatedSubmissions.map((submission) => (
+                  {paginatedSubmissions.map((submission) => {
+                    const target = openTarget(submission);
+                    return (
                     <Card
                       key={submission.id}
                       className="shadow-archival-md hover:shadow-archival-lg transition-shadow"
@@ -1713,16 +1707,25 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                             <div className="flex items-start justify-between gap-2 mb-2">
                               <div className="flex items-center gap-2 flex-wrap min-w-0">
                                 <h3 className="font-heading text-xl font-semibold text-foreground">
-                                  {submission.presentation.title}
+                                  <Link
+                                    to={target.to}
+                                    state={target.state}
+                                    className="rounded hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                  >
+                                    {submission.presentation.title}
+                                  </Link>
                                 </h3>
                                 <Badge variant="outline" className="rounded-full px-2.5 py-0.5 text-xs">
                                   {submission.presentation.entryKind}
                                 </Badge>
                               </div>
-                              {getStatusBadge(submission.status)}
+                              {getStatusBadge(submission.status, {
+                                onClick: () => goOpenDashboardItem(submission),
+                                className: "cursor-pointer",
+                              })}
                             </div>
 
-                            <ContributionSummaryFields
+                            <SubmissionSummaryFields
                               presentation={submission.presentation}
                               updatedAt={submission.updated_at}
                             />
@@ -1760,7 +1763,8 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                         </div>
                       </CardContent>
                     </Card>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
 
@@ -1897,7 +1901,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
           {activeTab === "editor" && isEditor && (
             <div className="flex flex-col lg:flex-row gap-6">
-              {/* Filters sidebar for contribution history. */}
+              {/* Filters sidebar for submission history. */}
               <aside className={`lg:w-80 space-y-6 ${filtersOpen ? "block" : "hidden lg:block"}`}>
                 <Card className="shadow-archival-md">
                   <CardContent className="pt-6 space-y-4">
@@ -2179,7 +2183,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
 
               <div className="flex-1 flex flex-col gap-6">
               <main className="flex-1 space-y-4">
-                {/* Contribution history in assigned states. */}
+                {/* Submission history in assigned states. */}
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-card p-4 rounded-lg border border-border shadow-archival-sm">
                   <div>
                     <p className="text-sm text-muted-foreground">
@@ -2363,7 +2367,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                       <p className="text-xs text-muted-foreground">
                         {isArchivedView
                           ? "Archiving a reviewed entry clears it off this queue without deleting it."
-                          : "User contributions in your assigned states will appear here."}
+                          : "User submissions in your assigned states will appear here."}
                       </p>
                     </CardContent>
                   </Card>
@@ -2390,8 +2394,8 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                             submittedTo: editorTo || undefined,
                             source: editorSourceFilter,
                           }}
-                          selectedIds={selectedContributionIds}
-                          onSelectionChange={setSelectedContributionIds}
+                          selectedIds={selectedSubmissionIds}
+                          onSelectionChange={setSelectedSubmissionIds}
                           matchCount={editorHistoryTotalCount}
                           onCompleted={() => setSubmissionsRefetchKey((k) => k + 1)}
                         />
@@ -2401,12 +2405,12 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                             checked={
                               editorHistoryItems.length > 0 &&
                               editorHistoryItems.every((i) =>
-                                selectedContributionIds.includes(i.id),
+                                selectedSubmissionIds.includes(i.id),
                               )
                             }
                             onCheckedChange={(checked) => {
                               const pageIds = editorHistoryItems.map((i) => i.id);
-                              setSelectedContributionIds((prev) =>
+                              setSelectedSubmissionIds((prev) =>
                                 checked
                                   ? Array.from(new Set([...prev, ...pageIds]))
                                   : prev.filter((id) => !pageIds.includes(id)),
@@ -2423,6 +2427,7 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                     {editorHistoryItems.map((item) => {
                       const displayLabel = item.presentation.title;
                       const statusClassName = statusColorClass(item.status);
+                      const target = openTarget(item);
                       return (
                         <li
                           key={item.id}
@@ -2431,9 +2436,9 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                           <div className="flex items-center gap-4 min-w-0 flex-1">
                             {isEditor && !isArchivedView && (
                               <Checkbox
-                                checked={selectedContributionIds.includes(item.id)}
+                                checked={selectedSubmissionIds.includes(item.id)}
                                 onCheckedChange={(checked) =>
-                                  setSelectedContributionIds((prev) =>
+                                  setSelectedSubmissionIds((prev) =>
                                     checked
                                       ? [...prev, item.id]
                                       : prev.filter((id) => id !== item.id),
@@ -2455,13 +2460,17 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                               />
                             </button>
                             <div className="min-w-0">
-                              <span className="font-medium text-foreground block truncate">
+                              <Link
+                                to={target.to}
+                                state={target.state}
+                                className="font-medium text-foreground block truncate rounded hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              >
                                 {displayLabel}
-                              </span>
+                              </Link>
                               <span className="text-muted-foreground text-sm">
                                 by {item.contributor_username}
                               </span>
-                              <ContributionSummaryFields
+                              <SubmissionSummaryFields
                                 presentation={item.presentation}
                                 updatedAt={item.updated_at}
                                 compact
@@ -2482,7 +2491,10 @@ const Dashboard = ({ initialTab = "submissions" }: DashboardProps) => {
                             <Badge variant="outline" className="rounded-full px-3 py-1 text-xs font-semibold">
                               {item.presentation.entryKind}
                             </Badge>
-                            <Badge className={`rounded-full px-3 py-1 text-xs font-semibold shadow-sm ${statusClassName}`}>
+                            <Badge
+                              className={`rounded-full px-3 py-1 text-xs font-semibold shadow-sm cursor-pointer ${statusClassName}`}
+                              onClick={() => goOpenDashboardItem(item)}
+                            >
                               {item.status === "needs_revision"
                                 ? "Needs Revision"
                                 : item.status === "approved"

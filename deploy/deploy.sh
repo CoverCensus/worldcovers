@@ -6,7 +6,7 @@ set -e
 cd "$(dirname "$0")/.."
 
 echo "[1/4] Syncing Python dependencies (uv)..."
-# --no-dev: skip the [dependency-groups] dev list (ipykernel, anthropic, ...).
+# --no-dev: skip the [dependency-groups] dev list (ipykernel, pytest, ...).
 # --frozen: fail if uv.lock is out of date instead of silently regenerating;
 #           on a server we want the locked resolution or nothing.
 uv sync --no-dev --frozen

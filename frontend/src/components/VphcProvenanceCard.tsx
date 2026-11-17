@@ -1,4 +1,4 @@
-// Read-only provenance for a contribution produced by the VPHC ingest.
+// Read-only provenance for a submission produced by the VPHC ingest.
 //
 // The catalog fields above this block are what the ingest concluded; this is
 // how much of that was guesswork. Nothing here is applied to the marking --

@@ -31,6 +31,7 @@ import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { isTrueCircleShapeName } from "@/lib/shapeDisplay";
 import { catalogHref, rememberCatalogLocation } from "@/lib/catalogParams";
+import { rememberCatalogQuery, rememberCatalogRow, takeCatalogRow } from "@/lib/catalogCursor";
 
 const DEBOUNCE_MS = 800;
 
@@ -542,6 +543,50 @@ const Search = () => {
     [referenceWorkOptionsRaw],
   );
 
+  // The options object handed to getMarkingsPage. Built once per filter state
+  // so the same object is remembered as the catalog cursor (Trello T95): the
+  // marking page replays this exact call to find its neighbours.
+  const listOptions = useMemo(
+    () => ({
+      search: debouncedKeywordSearch.trim() || undefined,
+      shapeId: manuscriptFilter !== "only" && shapeFilter !== "all" ? shapeFilter : undefined,
+      type: typeFilterApi,
+      manuscripts: manuscriptFilter,
+      color: colorFilter !== "all" ? colorFilter : undefined,
+      state: stateFilter !== "all" ? stateFilter : undefined,
+      town: debouncedTownFilter.trim() || undefined,
+      referenceWorkCode: referenceWorkFilter !== "all" ? referenceWorkFilter : undefined,
+      beginYear: normalizedBeginYear || undefined,
+      endYear: normalizedEndYear || undefined,
+      height: normalizedHeight || undefined,
+      width: normalizedWidth || undefined,
+      hasImages: imagesOnly,
+      hasCovers: coversOnly,
+      institutional: institutionalOnly,
+      reviewed: reviewedFilter !== "all" ? reviewedFilter : undefined,
+      ordering: orderingParamForSort(catalogSort),
+    }),
+    [
+      debouncedKeywordSearch,
+      manuscriptFilter,
+      shapeFilter,
+      typeFilterApi,
+      colorFilter,
+      stateFilter,
+      debouncedTownFilter,
+      referenceWorkFilter,
+      normalizedBeginYear,
+      normalizedEndYear,
+      normalizedHeight,
+      normalizedWidth,
+      imagesOnly,
+      coversOnly,
+      institutionalOnly,
+      reviewedFilter,
+      catalogSort,
+    ],
+  );
+
   // Fetch markings with React Query - cached so Back shows previous results immediately.
   // The unified /markings/ endpoint already returns one row per marking with its
   // own type discriminator, so no client-side fan-out is needed.
@@ -574,32 +619,7 @@ const Search = () => {
       catalogSortKey,
     ],
     queryFn: async () => {
-      const normalizedFrom = normalizedBeginYear || undefined;
-      const normalizedTo = normalizedEndYear || undefined;
-
-      const { results, count, count_capped } = await getMarkingsPage(
-        currentPage,
-        itemsPerPage,
-        {
-          search: debouncedKeywordSearch.trim() || undefined,
-          shapeId: manuscriptFilter !== "only" && shapeFilter !== "all" ? shapeFilter : undefined,
-          type: typeFilterApi,
-          manuscripts: manuscriptFilter,
-          color: colorFilter !== "all" ? colorFilter : undefined,
-          state: stateFilter !== "all" ? stateFilter : undefined,
-          town: debouncedTownFilter.trim() || undefined,
-          referenceWorkCode: referenceWorkFilter !== "all" ? referenceWorkFilter : undefined,
-          beginYear: normalizedFrom,
-          endYear: normalizedTo,
-          height: normalizedHeight || undefined,
-          width: normalizedWidth || undefined,
-          hasImages: imagesOnly,
-          hasCovers: coversOnly,
-          institutional: institutionalOnly,
-          reviewed: reviewedFilter !== "all" ? reviewedFilter : undefined,
-          ordering: orderingParamForSort(catalogSort),
-        }
-      );
+      const { results, count, count_capped } = await getMarkingsPage(currentPage, itemsPerPage, listOptions);
       return { records: results, count, count_capped };
     },
     // Always refetch when the user navigates to a different page (or changes
@@ -613,7 +633,7 @@ const Search = () => {
     placeholderData: keepPreviousData,
   });
 
-  const catalogRecords: MarkingRecord[] = queryData?.records ?? [];
+  const catalogRecords: MarkingRecord[] = useMemo(() => queryData?.records ?? [], [queryData]);
   const totalCount = queryData?.count ?? 0;
   const countCapped = queryData?.count_capped ?? false;
   // Show loading only when we have no data; when we have cached data, show it (no spinner)
@@ -639,8 +659,9 @@ const Search = () => {
     }
   }, [queryError, toast]);
 
-  // Persist filters to URL so they survive navigation (Back from detail page)
-  useEffect(() => {
+  // Serialize the view for the URL, the return-path mirror and the catalog
+  // cursor. One builder so all three always agree.
+  const catalogSearchString = useMemo(() => {
     const params = new URLSearchParams();
     if (debouncedKeywordSearch.trim()) params.set("q", debouncedKeywordSearch.trim());
     if (stateFilter !== "all") params.set("state", stateFilter);
@@ -665,15 +686,35 @@ const Search = () => {
     if (!isDefaultSort(catalogSort)) params.set("order", catalogSortKey || "none");
     if (itemsPerPage !== 25) params.set("pageSize", String(itemsPerPage));
     if (currentPage > 1) params.set("page", String(currentPage));
-    const next = params.toString();
+    return params.toString();
+  }, [currentPage, debouncedKeywordSearch, stateFilter, debouncedTownFilter, referenceWorkFilter, normalizedBeginYear, normalizedEndYear, normalizedHeight, normalizedWidth, shapeFilter, typeFilter, colorFilter, manuscriptFilter, imagesOnly, coversOnly, institutionalOnly, reviewedFilter, submissionQueueSort, catalogSort, catalogSortKey, itemsPerPage]);
+
+  // Persist filters to URL so they survive navigation (Back from detail page)
+  useEffect(() => {
+    const next = catalogSearchString;
     const current = searchParams.toString();
     // Mirror before the equality check: a deep link arrives with the URL already
     // correct, and that view still has to be remembered for the trip back.
     rememberCatalogLocation(next);
+    rememberCatalogQuery({ search: next, page: currentPage, pageSize: itemsPerPage, options: listOptions });
     if (next !== current) {
-      setSearchParams(next ? params : {}, { replace: true });
+      setSearchParams(next ? new URLSearchParams(next) : {}, { replace: true });
     }
-  }, [currentPage, debouncedKeywordSearch, stateFilter, debouncedTownFilter, referenceWorkFilter, normalizedBeginYear, normalizedEndYear, normalizedHeight, normalizedWidth, shapeFilter, typeFilter, colorFilter, manuscriptFilter, imagesOnly, coversOnly, institutionalOnly, reviewedFilter, submissionQueueSort, catalogSort, catalogSortKey, itemsPerPage, searchParams, setSearchParams]);
+  }, [catalogSearchString, currentPage, itemsPerPage, listOptions, searchParams, setSearchParams]);
+
+  // Trello T95: coming back from a marking, put the row that was opened back
+  // in view. Deferred a frame so it runs after the route-level scroll-to-top
+  // (a parent effect, which fires after this one) on the in-page Back, which
+  // is a forward navigation.
+  useEffect(() => {
+    if (catalogRecords.length === 0) return;
+    const rowId = takeCatalogRow(catalogSearchString);
+    if (rowId == null) return;
+    const frame = window.requestAnimationFrame(() => {
+      document.querySelector(`[data-marking-id="${rowId}"]`)?.scrollIntoView({ block: "center" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [catalogRecords, catalogSearchString]);
 
   const totalPages = Math.ceil(totalCount / itemsPerPage) || 1;
   const pageStart = (currentPage - 1) * itemsPerPage;
@@ -1214,12 +1255,14 @@ const Search = () => {
                     return (
                       <Card
                         key={row.cardId}
+                        data-marking-id={record.id}
                         className="relative shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer"
-                        onClick={() =>
+                        onClick={() => {
+                          rememberCatalogRow(catalogSearchString, record.id);
                           navigate(`/record/${record.id}`, {
                             state: { fromSearch: true },
-                          })
-                        }
+                          });
+                        }}
                       >
                         <AdminEditLink
                           user={authUser}
@@ -1262,12 +1305,14 @@ const Search = () => {
                     return (
                       <Card
                         key={row.cardId}
+                        data-marking-id={record.id}
                         className={`relative shadow-archival-md hover:shadow-archival-lg transition-shadow cursor-pointer overflow-hidden ${authUser?.is_superuser === true ? "pt-14" : ""}`}
-                        onClick={() =>
+                        onClick={() => {
+                          rememberCatalogRow(catalogSearchString, record.id);
                           navigate(`/record/${record.id}`, {
                             state: { fromSearch: true },
-                          })
-                        }
+                          });
+                        }}
                       >
                         <AdminEditLink
                           user={authUser}

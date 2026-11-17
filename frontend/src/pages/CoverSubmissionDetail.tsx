@@ -1,0 +1,804 @@
+import { SubmissionDataNotice } from "@/components/SubmissionDataNotice";
+import { type SubmittedData } from "@/lib/submission";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { CheckCircle, ExternalLink, Loader2, MessageSquare, Pencil, Trash2, XCircle } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { AssociatedMarkingPreviewCard } from "@/components/entry-detail/AssociatedMarkingPreviewCard";
+import { EntryAssociatedThumbnailsCard } from "@/components/entry-detail/EntryAssociatedThumbnailsCard";
+import { EntryCitationsCard } from "@/components/entry-detail/EntryCitationsCard";
+import { EntryDetailLayout } from "@/components/entry-detail/EntryDetailLayout";
+import { EntryImageGalleryCard } from "@/components/entry-detail/EntryImageGalleryCard";
+import { CoverRecordDetailFields } from "@/components/entry-detail/CoverRecordDetailFields";
+import type { EntryGalleryImage } from "@/components/entry-detail/types";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { type CarouselApi } from "@/components/ui/carousel";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { useAuth } from "@/hooks/useAuth";
+import { useToast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
+import { CARRIED_OVER_LABEL,
+  insertCarriedTile,
+} from "@/lib/coverFromImageHandoff";
+import { dashboardHref, dashboardHrefForTab } from "@/lib/dashboardParams";
+import { coverTypeLabel as sharedCoverTypeLabel } from "@/lib/coverTypes";
+import { readReturnTo } from "@/lib/returnTo";
+import {
+  coverSubmissionDisplayName,
+  isCoverSubmissionData,
+  parentMarkingIdFromSubmission,
+  createdFromSubmissionIdFromSubmittedData,
+} from "@/lib/submissionDisplay";
+import {
+  formatPartialDateInput,
+  partialDateInputFromSubmittedData,
+} from "@/lib/partialDate";
+import {
+  submissionImageMetasFromSubmittedData,
+  submissionMetaImageUrl,
+} from "@/lib/submissionImages";
+// Separate line on purpose: another open PR touches the import above (merge safety).
+import { returnToLabel } from "@/lib/returnTo";
+import {
+  type Submission,
+  canReviewSubmission,
+  decideSubmission,
+  deleteOwnSubmission,
+  getSubmission,
+  getSubmissionCatalogCodeSuggestion,
+  getDirectCatalogCodeSuggestion,
+} from "@/services/submissions";
+import { getMarkingById, type MarkingRecord } from "@/services/markings";
+import { getReferenceWorks, type ReferenceWorkRecord } from "@/services/referenceWorks";
+
+import { submissionCitations } from "@/lib/submissionCitations";
+import { compareCoverEdit } from "@/lib/editComparison";
+import { EditComparisonCard } from "@/components/entry-detail/EditComparisonCard";
+
+function boolLabel(raw: unknown): string {
+  if (raw === true || raw === "true" || raw === "1" || raw === 1) return "Yes";
+  if (raw === false || raw === "false" || raw === "0" || raw === 0) return "No";
+  return "--";
+}
+
+function coverTypeLabel(typeCode: string): string {
+  return sharedCoverTypeLabel(typeCode) || "--";
+}
+
+function formatCoverDate(sd: SubmittedData): string {
+  return formatPartialDateInput(partialDateInputFromSubmittedData(sd)) || "--";
+}
+
+function tracingFlagsFromSubmittedData(sd: SubmittedData, imageCount: number): boolean[] {
+  return sd.cover_image_tags?.map((tag) => tag.toLowerCase() === "tracing")
+    ?? Array.from({ length: imageCount }, () => false);
+}
+
+
+interface CoverSubmissionDetailProps {
+  initialSubmission?: Submission | null;
+}
+
+export default function CoverSubmissionDetail({ initialSubmission = null }: CoverSubmissionDetailProps) {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { toast } = useToast();
+  const user = useAuth();
+
+  const [submission, setSubmission] = useState<Submission | null>(initialSubmission);
+  const [loading, setLoading] = useState(!initialSubmission);
+  const [error, setError] = useState<string | null>(null);
+  const [carouselApi, setCarouselApi] = useState<CarouselApi>();
+  const [carouselCurrent, setCarouselCurrent] = useState(0);
+  const [markingCode, setMarkingCode] = useState("");
+  const [markingIsBackstamp, setMarkingIsBackstamp] = useState(false);
+  const [comment, setComment] = useState("");
+  const [commentError, setCommentError] = useState<string | null>(null);
+  const [catalogCode, setCatalogCode] = useState("");
+  const [catalogCodeError, setCatalogCodeError] = useState<string | null>(null);
+  const [catalogCodeLoading, setCatalogCodeLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  // Withdraw/delete: the contributor may delete any of their own UNapproved
+  // cover submissions (backend IsOwnDeletableSubmission on DELETE).
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [parentMarking, setParentMarking] = useState<MarkingRecord | null>(null);
+  const [parentMarkingError, setParentMarkingError] = useState<string | null>(null);
+  const [referenceWorks, setReferenceWorks] = useState<ReferenceWorkRecord[]>([]);
+  const [referenceWorksError, setReferenceWorksError] = useState<string | null>(null);
+
+  const locationState = location.state as {
+    fromDashboard?: boolean;
+    dashboardTab?: "submissions" | "editor";
+  } | null;
+  const fromDashboard = locationState?.fromDashboard === true;
+  const dashboardTab = locationState?.dashboardTab;
+  // Issue #147, same contract as SubmissionDetail: `?from=` names the listing
+  // the editor came from and survives a direct link, where location.state and
+  // the sessionStorage mirror do not. Null when absent or off-origin, and every
+  // caller falls back to issue #87's behaviour.
+  const returnTo = readReturnTo(new URLSearchParams(location.search));
+  const isStateEditor =
+    user?.role === "editor" || user?.role === "administrator" || user?.is_superuser === true;
+  const canReview = canReviewSubmission(user, submission);
+  const unsupportedFields = submission?.unsupportedSubmissionFields ?? [];
+
+  useEffect(() => {
+    if (initialSubmission) {
+      setSubmission(initialSubmission);
+      setLoading(false);
+      return;
+    }
+    const submissionId = id ? Number.parseInt(String(id), 10) : null;
+    if (!submissionId || Number.isNaN(submissionId)) {
+      setError("Invalid submission");
+      setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    getSubmission(submissionId)
+      .then((normalized) => {
+        if (cancelled) return;
+        if (!isCoverSubmissionData(normalized.submittedData)) {
+          throw new Error("Not a cover submission");
+        }
+        setSubmission(normalized);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, initialSubmission]);
+
+  useEffect(() => {
+    if (!carouselApi) return;
+    setCarouselCurrent(carouselApi.selectedScrollSnap());
+    const onSelect = () => setCarouselCurrent(carouselApi.selectedScrollSnap());
+    carouselApi.on("select", onSelect);
+    return () => {
+      carouselApi.off("select", onSelect);
+    };
+  }, [carouselApi]);
+
+  const sd = useMemo<SubmittedData>(
+    () => submission?.submittedData ?? {},
+    [submission?.submittedData],
+  );
+  const parentMarkingId = parentMarkingIdFromSubmission(sd);
+  // Trello T37: this cover row was created when a Marking submission that carried it was approved.
+  const createdFromSubmissionId = createdFromSubmissionIdFromSubmittedData(sd);
+  const displayName =
+    submission?.displayName?.trim() ||
+    coverSubmissionDisplayName(sd, submission?.id ?? 0, {
+      town: parentMarking?.town,
+      state: parentMarking?.state,
+    });
+
+  useEffect(() => {
+    let cancelled = false;
+    setParentMarking(null);
+    setParentMarkingError(null);
+    setReferenceWorks([]);
+    setReferenceWorksError(null);
+
+    void (async () => {
+      const [marking, refs] = await Promise.all([
+        parentMarkingId != null ? getMarkingById(parentMarkingId) : Promise.resolve(null),
+        getReferenceWorks().catch(() => {
+          if (!cancelled) setReferenceWorksError("Could not load Reference Work names. Reload before review.");
+          return [];
+        }),
+      ]);
+      if (cancelled) return;
+      setParentMarking(marking);
+      setReferenceWorks(refs);
+      if (parentMarkingId != null && marking == null) {
+        setParentMarkingError("Could not load the parent marking preview.");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [parentMarkingId]);
+
+  const images = useMemo(() => {
+    const metas = submissionImageMetasFromSubmittedData(sd);
+    const tracingFlags = tracingFlagsFromSubmittedData(sd, metas.length);
+    return metas
+      .map((meta, index) => {
+        const imageUrl = submissionMetaImageUrl(meta);
+        if (!imageUrl) return null;
+        const obj = meta;
+        const originalFilename =
+          typeof obj.original_filename === "string"
+            ? obj.original_filename
+              : undefined;
+        return {
+          imageUrl,
+          originalFilename,
+          isTracing: tracingFlags[index] === true,
+          description: typeof obj.image_description === "string" ? obj.image_description : "",
+        };
+      })
+      .filter((row): row is NonNullable<typeof row> => row != null);
+  }, [sd]);
+
+  // Trello T37: a "Create cover from this image" submission has no uploaded
+  // meta for its picture; the detail endpoint resolves the carried marking
+  // image instead, and it shows first, as it did on the form. `images` stays
+  // metas-only above so the tracing flags keep their positions.
+  const carried = submission?.sourceMarkingImage ?? null;
+  const galleryImages = useMemo<EntryGalleryImage[]>(() => {
+    const uploads: EntryGalleryImage[] = images.map((img) => ({
+      imageUrl: img.imageUrl,
+      originalFilename: img.originalFilename,
+      isTracing: img.isTracing,
+      isDefault: false,
+      imageId: null,
+      description: img.description,
+    }));
+    // The carried tile sits where the contributor left it (workspace
+    // issues.md #181), and approval will place the row at the same slot.
+    const ordered = carried
+      ? insertCarriedTile(
+          uploads,
+          {
+            imageUrl: carried.imageUrl,
+            originalFilename: carried.originalFilename || CARRIED_OVER_LABEL,
+            isTracing: false,
+            isDefault: false,
+            imageId: carried.imageId,
+          },
+          carried.position,
+        )
+      : uploads;
+    return ordered.map((img, index) => ({ ...img, isDefault: index === 0 }));
+  }, [images, carried]);
+
+  const citations = useMemo(() => submissionCitations(sd, referenceWorks), [referenceWorks, sd]);
+  // Trello T39: an edit under review is set beside the cover as it is now.
+  const editBaseline = submission?.editBaseline ?? null;
+  const editComparison = useMemo(
+    () => (editBaseline ? compareCoverEdit(editBaseline, sd, referenceWorks) : null),
+    [editBaseline, referenceWorks, sd],
+  );
+
+  const isContributor =
+    !!user &&
+    !!submission &&
+    (submission.contributorId === user.id ||
+      submission.contributorUsername === user.username ||
+      submission.contributorUsername === user.email);
+
+  const handleBack = () => {
+    // Issue #87: keep the dashboard's page, page size and filters on the way back.
+    if (returnTo) {
+      navigate(returnTo);
+      return;
+    }
+    if (fromDashboard) {
+      navigate(dashboardHrefForTab(dashboardTab ?? (isStateEditor ? "editor" : "submissions")));
+      return;
+    }
+    navigate(dashboardHref());
+  };
+
+  const submissionId = submission?.id;
+
+  // Preview only -- see the note in SubmissionDetail.tsx. Firing the
+  // submission-scoped endpoint from an effect PERSISTS the minted code into
+  // submitted_data, so opening a pending row wrote to the database (issue #118).
+  // The cover queue was not implicated in the 27 VPHC rows, but it is the same
+  // defect. The direct endpoint computes the same code and saves nothing.
+  useEffect(() => {
+    if (submissionId == null || !canReview) return;
+    if ((sd.requires_catalog_marking || parentMarkingId == null) && sd.catalog_code) {
+      setCatalogCode(sd.catalog_code);
+      return;
+    }
+    if (parentMarkingId == null) return;
+    let cancelled = false;
+    setCatalogCodeLoading(true);
+    setCatalogCodeError(null);
+    getDirectCatalogCodeSuggestion({ subjectType: "COVER", markingId: parentMarkingId })
+      .then((suggestion) => {
+        if (!cancelled) setCatalogCode(suggestion.catalogCode);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setCatalogCodeError(err instanceof Error ? err.message : "Could not generate Catalog Cover code.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setCatalogCodeLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [submissionId, canReview, parentMarkingId, sd.requires_catalog_marking, sd.catalog_code]);
+
+  const ensureCatalogCode = async (): Promise<string> => {
+    if (!submission) return "";
+    const current = catalogCode.trim();
+    if (current) return current;
+    setCatalogCodeLoading(true);
+    setCatalogCodeError(null);
+    try {
+      const suggestion = await getSubmissionCatalogCodeSuggestion(submission.id, { force: true });
+      setCatalogCode(suggestion.catalogCode);
+      return suggestion.catalogCode;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not generate Catalog Cover code.";
+      setCatalogCodeError(message);
+      throw err;
+    } finally {
+      setCatalogCodeLoading(false);
+    }
+  };
+
+  const submitDecision = async (kind: "approve" | "reject" | "revision") => {
+    if (!submission || !canReview) return;
+    if (kind === "approve" && unsupportedFields.length > 0) return;
+    if (kind !== "approve" && !comment.trim()) {
+      setCommentError("A comment is required to reject or request revision.");
+      return;
+    }
+    setCommentError(null);
+
+    setSubmitting(true);
+    try {
+      const finalCatalogCode = kind === "approve" ? await ensureCatalogCode() : "";
+      const result = await decideSubmission(submission.id, kind, {
+        reviewNotes: comment.trim() || undefined,
+        ...(kind === "approve" ? { catalogCode: finalCatalogCode } : {}),
+        ...(kind === "approve" && sd.requires_catalog_marking ? { markingCode: markingCode.trim(), markingIsBackstamp } : {}),
+      });
+      const actionLabel = kind === "approve" ? "Approved" : kind === "reject" ? "Rejected" : "Submission returned";
+      // Issue #87: every decision returns to the review queue, matching the
+      // marking flow in SubmissionDetail. Approving used to redirect to the
+      // new cover, stranding the editor mid-queue; the cover is one click away
+      // from the toast instead.
+      const approvedCoverPath =
+        kind === "approve" && result.coverId != null
+          ? parentMarkingId != null
+            ? `/record/${parentMarkingId}/cover/${result.coverId}`
+            : `/covers/${result.coverId}`
+          : null;
+      toast({
+        title: actionLabel,
+        description: "Your comment was saved for the contributor.",
+        action: approvedCoverPath ? (
+          <ToastAction altText="View the approved cover" onClick={() => navigate(approvedCoverPath)}>
+            View cover
+          </ToastAction>
+        ) : undefined,
+      });
+      navigate(returnTo ?? dashboardHrefForTab(dashboardTab ?? "editor"));
+    } catch (err) {
+      toast({
+        title: "Could not submit",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex flex-col">
+        <div className="flex-1 flex items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !submission) {
+    return (
+      <EntryDetailLayout
+        onBack={handleBack}
+        backLabel={returnToLabel(returnTo)}
+        leftColumn={null}
+        rightColumn={
+          <Card className="shadow-archival-md">
+            <CardContent className="pt-6">
+              <p className="text-muted-foreground">{error || "Submission not found"}</p>
+            </CardContent>
+          </Card>
+        }
+      />
+    );
+  }
+
+  const normalizedStatus = String(submission.status || "").toLowerCase();
+  const statusLabel =
+    normalizedStatus === "approved"
+      ? "Approved"
+      : normalizedStatus === "rejected"
+        ? "Rejected"
+        : normalizedStatus === "needs_revision"
+          ? "Needs Revision"
+          : normalizedStatus === "draft"
+            ? "Draft"
+            : "Pending";
+  const statusBadgeClassName =
+    normalizedStatus === "approved"
+      ? "rounded-full border border-green-700 bg-green-600 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-green-600"
+      : normalizedStatus === "rejected"
+        ? "rounded-full border border-red-700 bg-red-600 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-red-600"
+        : normalizedStatus === "needs_revision"
+          ? "rounded-full border border-orange-600 bg-orange-500 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-orange-500"
+          : normalizedStatus === "draft"
+            ? "rounded-full border border-amber-900 bg-amber-800 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-amber-800"
+            : "rounded-full border border-yellow-600 bg-yellow-500 px-3 py-1 text-xs font-semibold text-black shadow-sm hover:bg-yellow-500";
+
+  const canContributorEdit =
+    isContributor &&
+    (normalizedStatus === "pending" ||
+      normalizedStatus === "rejected" ||
+      normalizedStatus === "needs_revision");
+  const canDeleteOwn = isContributor && normalizedStatus !== "approved";
+
+  const handleDeleteConfirm = async () => {
+    if (!submission) return;
+    setDeleting(true);
+    try {
+      await deleteOwnSubmission(submission.id);
+      toast({
+        title: "Submission deleted",
+        description: "Your cover submission has been removed.",
+      });
+      navigate(
+        returnTo ?? dashboardHrefForTab(dashboardTab ?? (isStateEditor ? "editor" : "submissions")),
+      );
+    } catch (err) {
+      toast({
+        title: "Could not delete submission",
+        description: err instanceof Error ? err.message : "Please try again.",
+        variant: "destructive",
+      });
+      setDeleting(false);
+      setDeleteOpen(false);
+    }
+  };
+  const contributorComment = String(
+    sd.contributor_comment ??
+      "",
+  ).trim();
+  const typeCode = String(sd.type ?? "").trim().toUpperCase();
+  const showReviewNotes = !!submission.reviewNotes?.trim();
+  const showEditorFeedbackCard =
+    submission.status !== "pending" || !!(submission.reviewNotes && submission.reviewNotes.trim());
+  const associatedMarkingCount = parentMarkingId != null ? 1 : 0;
+
+  const openParentMarking = () => {
+    if (parentMarkingId == null) return;
+    navigate(`/record/${parentMarkingId}`, {
+      state: { from: location.pathname + location.search },
+    });
+  };
+
+  const openApprovedCover = () => {
+    if (submission.coverId == null) return;
+    const path =
+      parentMarkingId != null
+        ? `/record/${parentMarkingId}/cover/${submission.coverId}`
+        : `/covers/${submission.coverId}`;
+    navigate(path, {
+      state: { from: location.pathname + location.search },
+    });
+  };
+
+  return (
+    <>
+    {/* Ian, 2026-09-21: the review screen must say which kind of submission
+        this is. The cover branch passed no title at all, so
+        EntryDetailLayout's <h1> never rendered and the only signal was a
+        badge inside a card, below the fold. */}
+    <EntryDetailLayout
+      onBack={handleBack}
+      backLabel={returnToLabel(returnTo)}
+      title="Cover"
+      leftColumn={(
+        <>
+          <EntryImageGalleryCard
+            images={galleryImages}
+            showSubjectBadge={false}
+            carouselApi={carouselApi}
+            setCarouselApi={setCarouselApi}
+            currentIndex={carouselCurrent}
+          />
+          <EntryAssociatedThumbnailsCard
+            images={galleryImages}
+            carouselApi={carouselApi}
+            currentIndex={carouselCurrent}
+            emptyMessage="No images linked to this cover submission yet."
+          />
+          <SubmissionDataNotice fields={unsupportedFields} />
+          {canReview && (
+            <Card className="shadow-archival-lg border-primary/20">
+              <CardHeader>
+                <CardTitle className="font-heading text-lg">Review this submission</CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  Choose Approve, Reject, or Return.
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="cover-submission-catalog-code">Catalog Cover code</Label>
+                  <Input
+                    id="cover-submission-catalog-code"
+                    value={catalogCode}
+                    onChange={(e) => {
+                      setCatalogCode(e.target.value);
+                      if (catalogCodeError) setCatalogCodeError(null);
+                    }}
+                    onBlur={() => {
+                      if (!catalogCode.trim()) void ensureCatalogCode();
+                    }}
+                    placeholder={catalogCodeLoading ? "Generating..." : "Catalog Cover code"}
+                    disabled={submitting || catalogCodeLoading}
+                  />
+                  {catalogCodeError ? <p className="text-sm text-destructive">{catalogCodeError}</p> : null}
+                </div>
+                {sd.requires_catalog_marking && (
+                  <div className="space-y-2">
+                    <Label htmlFor="cover-review-marking">Catalog code of the Marking on this Cover</Label>
+                    <Input id="cover-review-marking" value={markingCode}
+                      onChange={(e) => setMarkingCode(e.target.value)} disabled={submitting} />
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" checked={markingIsBackstamp} disabled={submitting}
+                        onChange={(e) => setMarkingIsBackstamp(e.target.checked)} />
+                      The selected Marking is on the back
+                    </label>
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <Label htmlFor="cover-submission-comment">Comment</Label>
+                  <Textarea
+                    id="cover-submission-comment"
+                    placeholder="Optional for approvals, required for rejection/revision."
+                    rows={4}
+                    value={comment}
+                    onChange={(e) => {
+                      setComment(e.target.value);
+                      if (commentError && e.target.value.trim()) setCommentError(null);
+                    }}
+                    disabled={submitting}
+                    className={`resize-none ${commentError ? "border-destructive" : ""}`}
+                  />
+                  {commentError ? <p className="text-sm text-destructive">{commentError}</p> : null}
+                </div>
+                <div className="flex flex-wrap gap-2 pt-2">
+                  <Button
+                    type="button"
+                    onClick={() => void submitDecision("approve")}
+                    disabled={submitting || unsupportedFields.length > 0 || (sd.requires_catalog_marking && !markingCode.trim())}
+                    className="bg-green-600 hover:bg-green-700"
+                  >
+                    <CheckCircle className="mr-2 h-4 w-4" />
+                    {submitting ? "Submitting..." : "Approve"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    onClick={() => void submitDecision("reject")}
+                    disabled={submitting}
+                  >
+                    <XCircle className="mr-2 h-4 w-4" />
+                    Reject
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void submitDecision("revision")}
+                    disabled={submitting}
+                  >
+                    <MessageSquare className="mr-2 h-4 w-4" />
+                    Return
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+          {showEditorFeedbackCard ? (
+            <Card className="shadow-archival-md border-amber-500/20 bg-amber-500/5">
+              <CardHeader>
+                <CardTitle className="font-heading text-lg flex items-center gap-2">
+                  <MessageSquare className="h-5 w-5 text-amber-600" />
+                  Editor feedback
+                </CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  {submission.status === "approved"
+                    ? "Your submission was approved and added to the catalog. If the editor left a comment below, use it as guidance for future submissions."
+                    : submission.status === "rejected"
+                      ? "Your submission was not accepted. See the comment below for details."
+                      : submission.status === "needs_revision"
+                        ? "The editor requested changes. Please update this submission and resubmit."
+                        : "The reviewer left a comment for you. Use this feedback to improve your submission or add a new cover if requested."}
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {showReviewNotes ? (
+                  <p className="text-sm text-foreground leading-relaxed whitespace-pre-line">
+                    {submission.reviewNotes?.trim()}
+                  </p>
+                ) : null}
+              </CardContent>
+            </Card>
+          ) : null}
+        </>
+      )}
+      rightColumn={(
+        <>
+          {editComparison && <EditComparisonCard entryLabel="cover" rows={editComparison} />}
+          <Card className="shadow-archival-md">
+            <CardHeader>
+              <div className="flex items-center justify-between gap-3">
+                <CardTitle className="font-heading text-lg">Cover Details</CardTitle>
+                <div className="flex flex-wrap items-center gap-2">
+                  {canContributorEdit && parentMarkingId != null && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        navigate(`/record/${parentMarkingId}/cover/new?edit=${submission.id}`, {
+                          state: { from: location.pathname + location.search },
+                        })
+                      }
+                      disabled={submitting || deleting}
+                    >
+                      <Pencil className="mr-2 h-4 w-4" />
+                      {normalizedStatus === "pending" ? "Edit" : "Edit before resubmitting"}
+                    </Button>
+                  )}
+                  {normalizedStatus === "approved" && submission.coverId != null && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={openApprovedCover}
+                      disabled={submitting || deleting}
+                    >
+                      <ExternalLink className="mr-2 h-4 w-4" />
+                      View cover
+                    </Button>
+                  )}
+                  {canDeleteOwn && (
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => setDeleteOpen(true)}
+                      disabled={submitting || deleting}
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Delete
+                    </Button>
+                  )}
+                </div>
+              </div>
+              <p className="text-sm text-muted-foreground">{displayName}</p>
+            </CardHeader>
+            <CardContent>
+              <div className="mb-4 flex flex-wrap items-center gap-2">
+                <Badge className={statusBadgeClassName}>{statusLabel}</Badge>
+              </div>
+              <CoverRecordDetailFields
+                type={coverTypeLabel(typeCode)}
+                date={formatCoverDate(sd)}
+                institutionallyOwned={boolLabel(sd.is_institutional)}
+                backstamp={boolLabel(sd.is_backstamp)}
+                description={String(sd.description ?? "")}
+              />
+              {contributorComment && (
+                <div className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-2">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Comment for editor</p>
+                  <p className="text-sm text-foreground whitespace-pre-line">{contributorComment}</p>
+                </div>
+              )}
+              <p className="mt-4 text-sm text-muted-foreground">
+                Submitted {new Date(submission.createdAt).toLocaleString()}
+                {submission.contributorUsername ? ` by ${submission.contributorUsername}` : ""}
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card className="shadow-archival-md">
+            <CardHeader>
+              <CardTitle className="font-heading text-lg">
+                Associated Markings ({associatedMarkingCount})
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4 pt-0">
+              {parentMarkingError && (
+                <p className="text-sm text-destructive rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2">
+                  {parentMarkingError}
+                </p>
+              )}
+              {parentMarking ? (
+                <AssociatedMarkingPreviewCard
+                  marking={parentMarking}
+                  defaultImageUrl={parentMarking.mainImage?.imageUrl ?? null}
+                  onOpenMarking={openParentMarking}
+                />
+              ) : parentMarkingId != null ? (
+                <div className="rounded-md border border-border px-4 py-3">
+                  <Button variant="outline" size="sm" onClick={openParentMarking}>
+                    Open parent marking
+                  </Button>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">No parent marking linked to this cover submission.</p>
+              )}
+              {createdFromSubmissionId != null && (
+                <p className="text-sm text-muted-foreground" data-testid="created-from-note">
+                  Created when{" "}
+                  <Link to={`/submission/${createdFromSubmissionId}`} className="text-primary underline">
+                    Marking submission #{createdFromSubmissionId}
+                  </Link>{" "}
+                  was approved; the contributor submitted both together.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+
+          {referenceWorksError && <p role="alert" className="text-destructive">{referenceWorksError}</p>}
+          <EntryCitationsCard
+            citations={citations}
+            emptyMessage="No citations linked to this cover submission yet."
+          />
+        </>
+      )}
+    />
+    <AlertDialog open={deleteOpen} onOpenChange={(open) => !deleting && setDeleteOpen(open)}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            {normalizedStatus === "draft" ? "Delete draft" : "Delete submission"}
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            {normalizedStatus === "pending"
+              ? "This withdraws your cover submission and permanently deletes it before it is reviewed. This cannot be undone."
+              : "This permanently deletes this cover submission. This cannot be undone."}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={(e) => {
+              e.preventDefault();
+              handleDeleteConfirm();
+            }}
+            disabled={deleting}
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+          >
+            {deleting ? "Deleting..." : "Delete"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
+  );
+}

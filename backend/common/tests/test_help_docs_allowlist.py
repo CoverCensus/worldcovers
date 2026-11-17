@@ -52,6 +52,31 @@ class HelpDocsAllowlistTests(TestCase):
         self.assertEqual(len(guide), 1)
         self.assertGreater(len(guide[0]["markdown"]), 0)
 
+    def test_getting_started_describes_the_live_site_and_the_review_flow(self):
+        # Trello T100: one site only, self-signup steps, and an Editor review
+        # walkthrough with the two training videos.
+        response = self.client.get(URL)
+        guide = [i for i in response.data["results"] if i["slug"] == "getting-started"][0]
+        for phrase in (
+            "Create account",
+            "Check your email",
+            "Reviewing submissions",
+            "Review this submission",
+            "https://youtu.be/VvQ1ZWW1cpk",
+            "https://www.youtube.com/watch?v=cLGOXS7Q7Ko",
+        ):
+            self.assertIn(phrase, guide["markdown"])
+        self.assertNotIn("Request a login", guide["markdown"])
+
+    def test_published_docs_never_name_the_development_site(self):
+        # Trello T100: editors were sent to woco.dev by the guide; Help names
+        # one site only. The badge note is allowed, the hostname is not.
+        response = self.client.get(URL)
+        offenders = {
+            doc["slug"] for doc in response.data["results"] if "woco.dev" in doc["markdown"].lower()
+        }
+        self.assertEqual(offenders, set())
+
     def test_rights_and_attribution_is_published_with_content(self):
         # Trello T69: Guests must be able to read the rights and credit guidance.
         response = self.client.get(URL)

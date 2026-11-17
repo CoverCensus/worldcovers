@@ -8,11 +8,11 @@ says nothing about the county (absent key or "") changes no links at all.
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
-from common.contribution_apply import (
-    ContributionApplyError, apply_contribution_to_catalog, describe_county_intent,
+from common.submission_apply import (
+    SubmissionApplyError, apply_submission_to_catalog, describe_county_intent,
 )
 from common.models import (
-    Collection, Contribution, Marking, PostOffice, PostOfficeRegion, Region,
+    Collection, Submission, Marking, PostOffice, PostOfficeRegion, Region,
 )
 
 
@@ -51,11 +51,11 @@ class CountyFixture(TestCase):
         return data
 
     def apply(self, **payload):
-        contrib = Contribution.objects.create(
+        contrib = Submission.objects.create(
             contributor=self.user, collection=self.collection, submitted_data=payload,
-            status=Contribution.STATUS_PENDING, **self.audit,
+            status=Submission.STATUS_PENDING, **self.audit,
         )
-        return apply_contribution_to_catalog(contrib)
+        return apply_submission_to_catalog(contrib)
 
 
 class CountyLinkOnApprovalTests(CountyFixture):
@@ -70,13 +70,13 @@ class CountyLinkOnApprovalTests(CountyFixture):
         self.assertEqual(self.links(self.lynchburg), {self.va.pk, self.campbell.pk})
 
     def test_a_county_from_another_state_is_refused(self):
-        with self.assertRaisesMessage(ContributionApplyError, "not in 'Virginia'"):
+        with self.assertRaisesMessage(SubmissionApplyError, "not in 'Virginia'"):
             self.apply(**self.payload("Onancock", county_id=self.montgomery.pk))
 
     def test_a_non_county_region_is_refused(self):
-        with self.assertRaisesMessage(ContributionApplyError, "not a County region"):
+        with self.assertRaisesMessage(SubmissionApplyError, "not a County region"):
             self.apply(**self.payload("Onancock", county_id=self.va.pk))
-        with self.assertRaisesMessage(ContributionApplyError, "not a Region id"):
+        with self.assertRaisesMessage(SubmissionApplyError, "not a Region id"):
             self.apply(**self.payload("Onancock", county_id="abc"))
 
     def test_an_edit_that_says_nothing_about_the_county_changes_no_links(self):
@@ -98,7 +98,7 @@ class CountyLinkOnApprovalTests(CountyFixture):
         self.assertEqual(self.links(self.richmond), {self.va.pk, self.accomack.pk})
 
     def test_a_county_name_that_disagrees_with_the_id_is_refused(self):
-        with self.assertRaisesMessage(ContributionApplyError, "does not match"):
+        with self.assertRaisesMessage(SubmissionApplyError, "does not match"):
             self.apply(**self.payload("Onancock", county_id=self.accomack.pk, county="Campbell"))
         # The approval view's transaction rolls the town back; here, no county link was written.
         self.assertFalse(PostOfficeRegion.objects.filter(region=self.accomack).exists())

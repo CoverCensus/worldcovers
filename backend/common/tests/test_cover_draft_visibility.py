@@ -16,7 +16,7 @@ from rest_framework.test import APIClient
 from common.models import (
     Collection,
     CollectionAssignment,
-    Contribution,
+    Submission,
     Marking,
     PostOffice,
     PostOfficeRegion,
@@ -35,7 +35,7 @@ class CoverDraftVisibilityTests(TestCase):
         # An Editor assigned to the draft's own Collection: the strongest case
         # for the queue lens, since every other filter would let the row in.
         editors = Group.objects.create(name="Editors")
-        editors.permissions.add(Permission.objects.get(codename="review_contribution"))
+        editors.permissions.add(Permission.objects.get(codename="review_submission"))
         self.editor = User.objects.create_user(username="va_editor", password="pw")
         self.editor.groups.add(editors)
         self.region = Region.objects.create(
@@ -81,7 +81,7 @@ class CoverDraftVisibilityTests(TestCase):
         # The same request the Marking edit form sends when the contributor
         # turns a cover-like upload into a Cover draft (minus the file).
         response = self.client.post(
-            "/api/v2/contributions/",
+            "/api/v2/submissions/",
             {
                 "submission_kind": "cover",
                 "save_as_draft": "true",
@@ -94,11 +94,11 @@ class CoverDraftVisibilityTests(TestCase):
         self.assertEqual(response.status_code, 201, getattr(response, "data", None))
         self.draft_id = response.data["id"]
         self.assertEqual(
-            Contribution.objects.get(pk=self.draft_id).status, Contribution.STATUS_DRAFT
+            Submission.objects.get(pk=self.draft_id).status, Submission.STATUS_DRAFT
         )
 
     def _listed_ids(self, **params):
-        response = self.client.get("/api/v2/contributions/", params)
+        response = self.client.get("/api/v2/submissions/", params)
         self.assertEqual(response.status_code, 200, getattr(response, "data", None))
         data = response.data
         rows = data["results"] if isinstance(data, dict) else data
@@ -107,7 +107,7 @@ class CoverDraftVisibilityTests(TestCase):
     def test_author_lists_the_draft_with_its_parent_marking(self):
         ids = self._listed_ids(status="draft", page_size=100)
         self.assertIn(self.draft_id, ids)
-        detail = self.client.get(f"/api/v2/contributions/{self.draft_id}/")
+        detail = self.client.get(f"/api/v2/submissions/{self.draft_id}/")
         self.assertEqual(detail.status_code, 200)
         sd = detail.data["submitted_data"]
         self.assertEqual(sd["submission_kind"], "cover")
@@ -117,13 +117,13 @@ class CoverDraftVisibilityTests(TestCase):
         self.client.force_authenticate(self.other)
         self.assertNotIn(self.draft_id, self._listed_ids(status="draft", page_size=100))
         self.assertNotIn(self.draft_id, self._listed_ids(page_size=100))
-        detail = self.client.get(f"/api/v2/contributions/{self.draft_id}/")
+        detail = self.client.get(f"/api/v2/submissions/{self.draft_id}/")
         self.assertEqual(detail.status_code, 404)
 
     def test_assigned_editor_can_still_open_it_by_id(self):
         # Documents the pre-existing retrieve rule rather than a T92 claim.
         self.client.force_authenticate(self.editor)
-        detail = self.client.get(f"/api/v2/contributions/{self.draft_id}/")
+        detail = self.client.get(f"/api/v2/submissions/{self.draft_id}/")
         self.assertEqual(detail.status_code, 200)
 
     def test_editor_queue_excludes_drafts(self):

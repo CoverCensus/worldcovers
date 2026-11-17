@@ -28,7 +28,7 @@ class ReferenceWorkApiTests(TestCase):
         # Legacy group-based Editor: Editors group with the review permission only.
         self.group_editor = User.objects.create_user(username="group-editor", password="pw")
         editors = Group.objects.create(name="Editors")
-        editors.permissions.add(Permission.objects.get(codename="review_contribution"))
+        editors.permissions.add(Permission.objects.get(codename="review_submission"))
         self.group_editor.groups.add(editors)
         # Scoped Editor: a CollectionAssignment and nothing else.
         self.scoped_editor = User.objects.create_user(username="scoped-editor", password="pw")
@@ -50,8 +50,12 @@ class ReferenceWorkApiTests(TestCase):
             "edition": "2",
         }
 
-    def test_anonymous_cannot_read_or_write(self):
-        self.assertIn(self.client.get("/api/v2/reference-works/").status_code, (401, 403))
+    def test_anonymous_can_read_but_not_write(self):
+        # Public reads: the signed-out cover page loads this list.
+        self.assertEqual(self.client.get("/api/v2/reference-works/").status_code, 200)
+        self.assertEqual(
+            self.client.get(f"/api/v2/reference-works/{self.ascc.pk}/").status_code, 200,
+        )
         self.assertIn(
             self.client.post("/api/v2/reference-works/", self.payload, format="json").status_code,
             (401, 403),

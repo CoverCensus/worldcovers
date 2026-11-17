@@ -36,6 +36,7 @@ from common.date_range import (
 from common.management.commands.verify_media_integrity import _sha256
 
 NATURAL_KEYS = {
+    "common.catalogsourceitem": ("reference_work", "kind", "source_key"),
     "common.region": ("name", "abbrev", "region_tier", "parent_region", "established_date", "defunct_date"),
     "common.collection": ("region",),
     "common.color": ("name",), "common.shape": ("name",),
@@ -134,7 +135,7 @@ def matching_record(row: dict[str, Any], fields: dict[str, Any], source: str, cl
     if model._meta.pk.is_relation:
         return manager.filter(pk=fields[model._meta.pk.attname]).first()
     names = NATURAL_KEYS.get(row["model"])
-    if row["model"] == "common.contribution" and fields.get("marking_id"):
+    if row["model"] == "common.submission" and fields.get("marking_id"):
         names = ("marking",)
     if names:
         query = {model._meta.get_field(name).attname: fields[model._meta.get_field(name).attname] for name in names}
@@ -274,7 +275,7 @@ def verify_graph(manifest: dict[str, Any], records: dict[str, Any]) -> dict[str,
 
 def verify_membership(manifest: dict[str, Any], records: dict[str, Any], ids: dict[str, Any]) -> None:
     """An extra child or link is a difference too, not a successful copy."""
-    from common.collection_archive import collection_scope
+    from common.collection_archive import collection_scope, source_items_for
 
     expected = {
         label: {ids[key] for key, row in records.items() if row["model"] == label and not row["external"]}
@@ -282,7 +283,7 @@ def verify_membership(manifest: dict[str, Any], records: dict[str, Any], ids: di
     }
     collection = catalog.Collection.objects.get(pk=ids[manifest["collection"]])
     scope = collection_scope(collection)
-    for label, name in (("common.marking", "markings"), ("common.cover", "covers"), ("common.contribution", "contributions")):
+    for label, name in (("common.marking", "markings"), ("common.cover", "covers"), ("common.submission", "submissions")):
         if scope[name] != expected[label]:
             raise CommandError(f"Target Collection membership differs: {label}")
     markings, covers = scope["markings"], scope["covers"]
@@ -290,16 +291,17 @@ def verify_membership(manifest: dict[str, Any], records: dict[str, Any], ids: di
     subject = Q(subject_type="MARKING", subject_id__in=markings) | Q(subject_type="COVER", subject_id__in=covers)
     queries = [model.objects.filter(subject) for model in (catalog.Image, catalog.Citation, catalog.DateSeen)]
     queries.extend((
+        source_items_for(scope["post_offices"], markings, covers, scope["submissions"]),
         catalog.CoverMarking.objects.filter(Q(cover_id__in=covers) | Q(marking_id__in=markings)),
         catalog.MarkingVersion.objects.filter(marking_id__in=markings),
         catalog.CoverVersion.objects.filter(cover_id__in=covers),
         catalog.CoverValuation.objects.filter(cover_id__in=covers),
         catalog.MarkingRecycleBin.objects.filter(marking_id__in=markings),
         catalog.CoverRecycleBin.objects.filter(cover_id__in=covers),
-        catalog.ContributionRecycleBin.objects.filter(contribution_id__in=scope["contributions"]),
+        catalog.SubmissionRecycleBin.objects.filter(submission_id__in=scope["submissions"]),
         catalog.PostOfficeRegion.objects.filter(post_office_id__in=scope["post_offices"]),
         catalog.PostmasterTenure.objects.filter(post_office_id__in=scope["post_offices"]),
-        catalog.SubmissionTransaction.objects.filter(Q(marking_id__in=markings) | Q(cover_id__in=covers) | Q(contribution_id__in=scope["contributions"])),
+        catalog.SubmissionTransaction.objects.filter(Q(marking_id__in=markings) | Q(cover_id__in=covers) | Q(submission_id__in=scope["submissions"])),
     ))
     for query in queries:
         label = query.model._meta.label_lower

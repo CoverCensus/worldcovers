@@ -55,11 +55,11 @@ class SubmitterNamePreferenceTests(TestCase):
         if preference is not None:
             data["display_submitter_name"] = preference
         self.client.force_authenticate(actor)
-        response = self.client.post("/api/v2/contributions/", data, format=fmt)
+        response = self.client.post("/api/v2/submissions/", data, format=fmt)
         self.assertEqual(response.status_code, 201, response.data)
         self.client.force_authenticate(self.editor)
         response = self.client.post(
-            f"/api/v2/contributions/{response.data['id']}/approve/", {}, format="json"
+            f"/api/v2/submissions/{response.data['id']}/approve/", {}, format="json"
         )
         self.assertEqual(response.status_code, 200, response.data)
         entry.refresh_from_db()
@@ -142,7 +142,7 @@ class SubmitterNamePreferenceTests(TestCase):
         for entry in (self.marking, self.cover):
             self.client.force_authenticate(self.other)
             response = self.client.post(
-                "/api/v2/contributions/",
+                "/api/v2/submissions/",
                 {**self.payload(entry), "display_submitter_name": False, "save_as_draft": True},
                 format="multipart",
             )
@@ -151,12 +151,12 @@ class SubmitterNamePreferenceTests(TestCase):
             entry.display_submitter_name = True
             entry.save()
             response = self.client.post(
-                "/api/v2/contributions/",
-                {**self.payload(entry), "edit_contribution_id": draft_id}, format="multipart",
+                "/api/v2/submissions/",
+                {**self.payload(entry), "edit_submission_id": draft_id}, format="multipart",
             )
             self.assertEqual(response.status_code, 200, response.data)
             self.client.force_authenticate(self.editor)
-            response = self.client.post(f"/api/v2/contributions/{draft_id}/approve/", {}, format="json")
+            response = self.client.post(f"/api/v2/submissions/{draft_id}/approve/", {}, format="json")
             self.assertEqual(response.status_code, 200, response.data)
             entry.refresh_from_db()
             self.assertTrue(entry.display_submitter_name)

@@ -38,7 +38,7 @@ from common.models import (
     Citation,
     Collection,
     Color,
-    Contribution,
+    Submission,
     Cover,
     CoverMarking,
     CoverRecycleBin,
@@ -113,11 +113,11 @@ class UuidForeignKeyWidget(ForeignKeyWidget):
             return None
 
 
-class ContributionMarkingCodeWidget(Widget):
-    """Contribution FK widget keyed by the approved Marking.code.
+class SubmissionMarkingCodeWidget(Widget):
+    """Submission FK widget keyed by the approved Marking.code.
 
-    The command imports Contribution rows before SubmissionTransaction rows, so
-    a transaction can resolve its contribution from the portable marking code.
+    The command imports Submission rows before SubmissionTransaction rows, so
+    a transaction can resolve its submission from the portable marking code.
     """
 
     def clean(self, value, row=None, **kwargs):
@@ -126,7 +126,7 @@ class ContributionMarkingCodeWidget(Widget):
         code = str(value).strip()
         if not code:
             return None
-        return Contribution.objects.filter(marking__code=code).first()
+        return Submission.objects.filter(marking__code=code).first()
 
     def render(self, value, obj=None, **kwargs):
         if value is None or getattr(value, "marking_id", None) is None:
@@ -1016,10 +1016,10 @@ class MarkingSubmissionTransactionResource(
         attribute="actor",
         widget=UsernameForeignKeyWidget(),
     )
-    contribution = fields.Field(
-        column_name="contribution_marking_code",
-        attribute="contribution",
-        widget=ContributionMarkingCodeWidget(),
+    submission = fields.Field(
+        column_name="submission_marking_code",
+        attribute="submission",
+        widget=SubmissionMarkingCodeWidget(),
     )
     marking = fields.Field(
         column_name="marking_code",
@@ -1065,7 +1065,7 @@ class MarkingSubmissionTransactionResource(
             "transaction_uuid",
             "actor",
             "action",
-            "contribution",
+            "submission",
             "marking",
             "cover",
             "source",
@@ -1090,10 +1090,10 @@ class MarkingSubmissionTransactionResource(
         super().before_save_instance(instance, row, **kwargs)
 
 
-class MarkingContributionResource(PortableTimestampedResource):
-    """Contribution.marking is OneToOne -- one Contribution per Marking. We
+class MarkingSubmissionResource(PortableTimestampedResource):
+    """Submission.marking is OneToOne -- one Submission per Marking. We
     key on marking_code so restoring is idempotent. Pending cover rows have no
-    Contribution.marking yet, so the resource also exports target codes from
+    Submission.marking yet, so the resource also exports target codes from
     submitted_data and remaps those JSON ids before import."""
 
     contributor = fields.Field(
@@ -1131,7 +1131,7 @@ class MarkingContributionResource(PortableTimestampedResource):
     )
 
     class Meta(PortableTimestampedResource.Meta):
-        model = Contribution
+        model = Submission
         fields = (
             "id",
             "contributor",
@@ -1171,7 +1171,7 @@ class MarkingContributionResource(PortableTimestampedResource):
     def get_instance(self, instance_loader, row):
         marking = self.fields["marking"].clean(row)
         if marking is not None:
-            return Contribution.objects.filter(marking=marking).first()
+            return Submission.objects.filter(marking=marking).first()
 
         payload = _json_object(row.get("submitted_data"))
         if not _is_cover_submission_payload(payload):
@@ -1193,7 +1193,7 @@ class MarkingContributionResource(PortableTimestampedResource):
         if isinstance(first_meta, dict):
             checksum = str(first_meta.get("file_checksum") or "").strip()
 
-        candidates = Contribution.objects.filter(
+        candidates = Submission.objects.filter(
             contributor=contributor,
             marking__isnull=True,
         )
@@ -1238,7 +1238,7 @@ class MarkingContributionResource(PortableTimestampedResource):
             fallback = _fallback_audit_user()
             if fallback is None:
                 raise ValueError(
-                    "Cannot restore Contribution: contributor user missing "
+                    "Cannot restore Submission: contributor user missing "
                     "and no fallback audit user exists."
                 )
             instance.contributor = fallback
@@ -1593,9 +1593,9 @@ MARKING_DATASET_SPECS = (
         MarkingRecycleBinResource,
     ),
     MarkingDatasetSpec(
-        "contributions",
-        "contributions",
-        MarkingContributionResource,
+        "submissions",
+        "submissions",
+        MarkingSubmissionResource,
     ),
     MarkingDatasetSpec(
         "submission_transactions",

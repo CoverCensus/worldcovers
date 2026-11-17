@@ -15,25 +15,25 @@ function read(url: string): string | null {
 
 describe("withReturnTo", () => {
   it("attaches the target, preserving a query string the path already had", () => {
-    expect(withReturnTo("/contribution/9145", "/dashboard?tab=editor")).toBe(
-      "/contribution/9145?from=%2Fdashboard%3Ftab%3Deditor",
+    expect(withReturnTo("/submission/9145", "/dashboard?tab=editor")).toBe(
+      "/submission/9145?from=%2Fdashboard%3Ftab%3Deditor",
     );
-    expect(withReturnTo("/contribution/9145?x=1", "/dashboard")).toBe(
-      "/contribution/9145?x=1&from=%2Fdashboard",
+    expect(withReturnTo("/submission/9145?x=1", "/dashboard")).toBe(
+      "/submission/9145?x=1&from=%2Fdashboard",
     );
   });
 
   it("round-trips a full dashboard view, which is the whole point", () => {
     // Todd's complaint was losing the page size specifically.
     const view = "/dashboard?tab=editor&e_status=pending&e_pageSize=100&e_page=3";
-    const url = withReturnTo("/contribution/9145", view);
+    const url = withReturnTo("/submission/9145", view);
     expect(read(url.split("?")[1])).toBe(view);
   });
 
   it("leaves the path alone rather than emitting a target it would refuse to read", () => {
-    expect(withReturnTo("/contribution/9145", "https://evil.example")).toBe("/contribution/9145");
-    expect(withReturnTo("/contribution/9145", "")).toBe("/contribution/9145");
-    expect(withReturnTo("/contribution/9145", null)).toBe("/contribution/9145");
+    expect(withReturnTo("/submission/9145", "https://evil.example")).toBe("/submission/9145");
+    expect(withReturnTo("/submission/9145", "")).toBe("/submission/9145");
+    expect(withReturnTo("/submission/9145", null)).toBe("/submission/9145");
   });
 });
 
